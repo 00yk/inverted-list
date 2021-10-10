@@ -1,5 +1,4 @@
 use std::{fs::File, io::BufRead};
-use std::fs::OpenOptions;
 use std::io::{BufReader, Write};
 use std::mem::size_of_val;
 use std::collections::BTreeMap;
@@ -16,19 +15,16 @@ fn indent(size: usize) -> String {
 struct Posting {
     word: String,
     doc_ID: u32,
-    // freq: u32  // use percentage or num count?
+    freq: u32  // use percentage or num count?
 }
 fn dump_to_file(posting_vec: &mut Vec<Posting>) {
-
     // println!("{}", size_of_val(&*posting_vec));
-    // println!("{:?}", page_table);
     // in-mem sort posting vec
     posting_vec.sort();
     let mut now: String = chrono::offset::Utc::now().to_string();
     now.push_str(".tmp");
     let serialized = serde_json::to_vec_pretty(posting_vec).unwrap();
     // let serialized = bincode::serialize(posting_vec).unwrap();
-    // println!("{}", &serialized);
     let mut f = File::create(now).expect("Unable to create file");
     f.write_all(&serialized).unwrap();
 }
@@ -78,6 +74,13 @@ fn build_inverted_index_and_lexicon(){
     let ser = serde_json::to_vec(&lexicon).unwrap();
     f.write_all(&ser).unwrap();
 }
+fn dump_dict(doc_ID: u32, dict: BTreeMap<String, u32>, vec: &mut Vec<Posting>) {
+     // dumping [word]freq to Vec<Posting>
+     for (word, freq) in dict {
+         vec.push(Posting {doc_ID: doc_ID, word: word, freq: freq});
+     }
+
+}
 fn parse() {
     // let file = File::open("msmarco-docs.trec").unwrap();
     let file = File::open("small.trec").unwrap();
@@ -87,7 +90,8 @@ fn parse() {
     let mut flow = 0;
     let mut cnt = 0;
     let mut doc_count = 0;
-    let mut posting_vec: Vec<Posting> = vec![];
+    let mut posting_vec: Vec<Posting> = Vec::new();
+    let mut word_count: BTreeMap<String, u32> = BTreeMap::new();
     let mut page_table: BTreeMap<u32, String> = BTreeMap::new();
     let mut num_dumped_files = 1;
     for line in file.lines() {
@@ -102,8 +106,14 @@ fn parse() {
         if next_url == true {
             //println!("url line");
             next_url = false;
+
+            // dump dict for each docID
+            dump_dict(doc_count, word_count, &mut posting_vec);
+            word_count = BTreeMap::new();
+
             doc_count += 1;
             page_table.insert(doc_count, s);
+
             //assert_eq!(flow, 3);
             flow = 4;
             if cnt > 3000000 * num_dumped_files { // roughly 1.21GB for default json serialization
@@ -154,7 +164,8 @@ fn parse() {
             // count each term for this doc
             let words = s.split_whitespace();
             for word in words {
-                posting_vec.push(Posting {doc_ID: doc_count, word: word.to_string()});
+                // posting_vec.push(Posting {doc_ID: doc_count, word: word.to_string()});
+                word_count.entry(word.to_string()).and_modify(|freq| { *freq += 1 }).or_insert(1);
             }
         }
     }
