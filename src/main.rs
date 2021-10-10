@@ -43,14 +43,14 @@ fn build_inverted_index_and_lexicon(){
     // this posting will be consumed in the for loop
     let postings: Vec<Posting> = serde_json::from_reader(reader).unwrap(); // assume can be read entirely to DRAM
     let mut lexicon: BTreeMap<String, LexiconValue> = BTreeMap::new(); // term to start index in inverted index
-    let mut cur_inverted_list: Vec<u32> = Vec::new();
+    let mut cur_inverted_list: Vec<(u32, u32)> = Vec::new();
     let mut num_inverted_list = 0;
     let mut f = File::create("inverted_list.tmp").unwrap();
     for p in postings {
         if let Some(value) = lexicon.get(&p.word) {
             // if already in the middle of building a inverted list for p.word
             // then keep pushing current posting doc_ID to the inverted list
-            cur_inverted_list.push(p.doc_ID);
+            cur_inverted_list.push((p.doc_ID, p.freq));
             // update total inverted list len in lexicon for this term
             lexicon.entry(p.word).and_modify(|e| { e.len += 1 });
         }
@@ -67,7 +67,7 @@ fn build_inverted_index_and_lexicon(){
             // create a inverted list
             cur_inverted_list = Vec::new();
             // push the first posting onto the inverted list
-            cur_inverted_list.push(p.doc_ID);
+            cur_inverted_list.push((p.doc_ID, p.freq));
         }
     }
     let mut f = File::create("lexicon.tmp").unwrap();
