@@ -24,10 +24,11 @@ fn dump_to_file(posting_vec: &mut Vec<Posting>) {
     posting_vec.sort();
     let mut now: String = chrono::offset::Utc::now().to_string();
     now.push_str(".tmp");
-    let serialized = serde_json::to_vec(posting_vec).unwrap();
+    // let serialized = serde_json::to_vec(posting_vec).unwrap();
     // let serialized = bincode::serialize(posting_vec).unwrap();
-    let mut f = File::create(now).expect("Unable to create file");
-    f.write_all(&serialized).unwrap();
+    // let mut f = File::create(now).expect("Unable to create file");
+    // f.write_all(&serialized).unwrap();
+    offload_to_file(&posting_vec, &now).unwrap();
 }
 #[derive(Serialize, Deserialize)]
 struct LexiconValue {
@@ -38,16 +39,31 @@ fn merge_sort_postings() {
 
 }
 
+fn offload_to_file<T: Serialize>(object: &T, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let ser = bincode::serialize(object)?;
+    let mut f = File::create(filename)?;
+    f.write_all(&ser)?;
+    Ok(())
+}
+
+fn reload_to_mem<T: serde::de::DeserializeOwned>(filename: &str) -> Result<T, Box<dyn std::error::Error>> {
+    let f = File::open(filename)?;
+    let reader = BufReader::new(f);
+    Ok(bincode::deserialize_from(reader)?)
+}
+
 fn build_inverted_index_and_lexicon(){
     // read in term_to_term_ID mapping
-    let f = File::open("term_ID_to_term.tmp").unwrap();
-    let reader = BufReader::new(f);
-    let term_ID_to_term: BTreeMap<u32, String> = serde_json::from_reader(reader).unwrap(); // assume can be read entirely to DRAM
+    // let f = File::open("term_ID_to_term.tmp").unwrap();
+    // let reader = BufReader::new(f);
+    // let term_ID_to_term: BTreeMap<u32, String> = serde_json::from_reader(reader).unwrap(); // assume can be read entirely to DRAM
+    let term_ID_to_term: BTreeMap<u32, String> = reload_to_mem("term_ID_to_term.tmp").unwrap();
 
     let f = File::open("merged_postings.tmp").unwrap();
     let reader = BufReader::new(f);
     // this posting will be consumed in the for loop
-    let postings: Vec<Posting> = serde_json::from_reader(reader).unwrap(); // assume can be read entirely to DRAM
+    // let postings: Vec<Posting> = serde_json::from_reader(reader).unwrap(); // assume can be read entirely to DRAM
+    let postings: Vec<Posting> = bincode::deserialize_from(reader).unwrap(); // assume can be read entirely to DRAM
     let mut lexicon: BTreeMap<String, LexiconValue> = BTreeMap::new(); // term to start index in inverted index
     let mut cur_inverted_list: Vec<(u32, u32)> = Vec::new();
     let mut num_inverted_list = 0;
@@ -187,18 +203,21 @@ fn parse() {
     }
     dump_to_file(&mut posting_vec);
     // dump page table;
-    let serialized = serde_json::to_vec(&page_table).unwrap();
-    let mut f = File::create("page_table.tmp").expect("Unable to create file");
-    f.write_all(&serialized).unwrap();
+    // let serialized = serde_json::to_vec(&page_table).unwrap();
+    // let mut f = File::create("page_table.tmp").expect("Unable to create file");
+    // f.write_all(&serialized).unwrap();
+    offload_to_file(&term_ID_to_term, "page_table.tmp").unwrap();
 
     // dump term_ID_to_term mapping and term_to_term_ID mapping
-    let ser = serde_json::to_vec(&term_ID_to_term).unwrap();
-    let mut f = File::create("term_ID_to_term.tmp").expect("Unable to create file");
-    f.write_all(&ser).unwrap();
+    // let ser = serde_json::to_vec(&term_ID_to_term).unwrap();
+    // let mut f = File::create("term_ID_to_term.tmp").expect("Unable to create file");
+    // f.write_all(&ser).unwrap();
+    offload_to_file(&term_ID_to_term, "term_ID_to_term.tmp").unwrap();
 
-    let ser = serde_json::to_vec(&term_to_term_ID).unwrap();
-    let mut f = File::create("term_to_term_ID.tmp").expect("Unable to create file");
-    f.write_all(&ser).unwrap();
+    // let ser = serde_json::to_vec(&term_to_term_ID).unwrap();
+    // let mut f = File::create("term_to_term_ID.tmp").expect("Unable to create file");
+    // f.write_all(&ser).unwrap();
+    offload_to_file(&term_to_term_ID, "term_to_term_ID.tmp").unwrap();
 }
 fn main() {
     parse();
