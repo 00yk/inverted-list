@@ -13,7 +13,8 @@ fn indent(size: usize) -> String {
 }
 #[derive(Serialize, Deserialize, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct Posting {
-    word: String,
+    // word: String,
+    term_ID: u32,
     doc_ID: u32,
     freq: u32  // use percentage or num count?
 }
@@ -23,7 +24,7 @@ fn dump_to_file(posting_vec: &mut Vec<Posting>) {
     posting_vec.sort();
     let mut now: String = chrono::offset::Utc::now().to_string();
     now.push_str(".tmp");
-    let serialized = serde_json::to_vec_pretty(posting_vec).unwrap();
+    let serialized = serde_json::to_vec(posting_vec).unwrap();
     // let serialized = bincode::serialize(posting_vec).unwrap();
     let mut f = File::create(now).expect("Unable to create file");
     f.write_all(&serialized).unwrap();
@@ -38,6 +39,11 @@ fn merge_sort_postings() {
 }
 
 fn build_inverted_index_and_lexicon(){
+    // read in term_to_term_ID mapping
+    let f = File::open("term_ID_to_term.tmp").unwrap();
+    let reader = BufReader::new(f);
+    let term_ID_to_term: BTreeMap<u32, String> = serde_json::from_reader(reader).unwrap(); // assume can be read entirely to DRAM
+
     let f = File::open("merged_postings.tmp").unwrap();
     let reader = BufReader::new(f);
     // this posting will be consumed in the for loop
@@ -47,21 +53,22 @@ fn build_inverted_index_and_lexicon(){
     let mut num_inverted_list = 0;
     let mut f = File::create("inverted_list.tmp").unwrap();
     for p in postings {
-        if let Some(value) = lexicon.get(&p.word) {
+        let word = term_ID_to_term.get(&p.term_ID).unwrap();
+        if let Some(value) = lexicon.get(word) {
             // if already in the middle of building a inverted list for p.word
             // then keep pushing current posting doc_ID to the inverted list
             cur_inverted_list.push((p.doc_ID, p.freq));
             // update total inverted list len in lexicon for this term
-            lexicon.entry(p.word).and_modify(|e| { e.len += 1 });
+            lexicon.entry(word.clone()).and_modify(|e| { e.len += 1 });
         }
         else {
-            println!("Dumping {}: {:?}", p.word, cur_inverted_list);
+            println!("Dumping {}: {:?}", word, cur_inverted_list);
             // dump_inverted_list(&cur_inverted_list);
             let serialized = serde_json::to_vec(&cur_inverted_list).unwrap();
             f.write_all(&serialized).unwrap();
             // if this a new inverted list
             // insert this term into lexicon first with
-            lexicon.insert(p.word, LexiconValue { pos: num_inverted_list, len: 0 });
+            lexicon.insert(word.clone(), LexiconValue { pos: num_inverted_list, len: 0 });
             // update total number of inverted list
             num_inverted_list += 1;
             // create a inverted list
@@ -74,10 +81,11 @@ fn build_inverted_index_and_lexicon(){
     let ser = serde_json::to_vec(&lexicon).unwrap();
     f.write_all(&ser).unwrap();
 }
-fn dump_dict(doc_ID: u32, dict: BTreeMap<String, u32>, vec: &mut Vec<Posting>) {
+fn dump_dict(doc_ID: u32, dict: BTreeMap<String, u32>, vec: &mut Vec<Posting>, term_to_term_ID: &BTreeMap<String, u32>) {
      // dumping [word]freq to Vec<Posting>
      for (word, freq) in dict {
-         vec.push(Posting {doc_ID: doc_ID, word: word, freq: freq});
+         let term_ID = *term_to_term_ID.get(&word).unwrap();
+         vec.push(Posting {doc_ID: doc_ID, term_ID: term_ID, freq: freq});
      }
 
 }
@@ -94,6 +102,9 @@ fn parse() {
     let mut word_count: BTreeMap<String, u32> = BTreeMap::new();
     let mut page_table: BTreeMap<u32, String> = BTreeMap::new();
     let mut num_dumped_files = 1;
+    let mut term_ID_to_term: BTreeMap<u32, String> = BTreeMap::new();
+    let mut term_to_term_ID: BTreeMap<String, u32> = BTreeMap::new();
+    let mut term_count = 0;
     for line in file.lines() {
         cnt += 1;
         if cnt % 100000 == 0 {
@@ -108,7 +119,7 @@ fn parse() {
             next_url = false;
 
             // dump dict for each docID
-            dump_dict(doc_count, word_count, &mut posting_vec);
+            dump_dict(doc_count, word_count, &mut posting_vec, &term_to_term_ID);
             word_count = BTreeMap::new();
 
             doc_count += 1;
@@ -166,14 +177,28 @@ fn parse() {
             for word in words {
                 // posting_vec.push(Posting {doc_ID: doc_count, word: word.to_string()});
                 word_count.entry(word.to_string()).and_modify(|freq| { *freq += 1 }).or_insert(1);
+                if let None = term_to_term_ID.get(word) {
+                    term_to_term_ID.insert(word.to_string(), term_count);
+                    term_ID_to_term.insert(term_count, word.to_string());
+                    term_count += 1;
+                }
             }
         }
     }
     dump_to_file(&mut posting_vec);
     // dump page table;
-    let serialized = serde_json::to_vec_pretty(&page_table).unwrap();
+    let serialized = serde_json::to_vec(&page_table).unwrap();
     let mut f = File::create("page_table.tmp").expect("Unable to create file");
     f.write_all(&serialized).unwrap();
+
+    // dump term_ID_to_term mapping and term_to_term_ID mapping
+    let ser = serde_json::to_vec(&term_ID_to_term).unwrap();
+    let mut f = File::create("term_ID_to_term.tmp").expect("Unable to create file");
+    f.write_all(&ser).unwrap();
+
+    let ser = serde_json::to_vec(&term_to_term_ID).unwrap();
+    let mut f = File::create("term_to_term_ID.tmp").expect("Unable to create file");
+    f.write_all(&ser).unwrap();
 }
 fn main() {
     parse();
