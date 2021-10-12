@@ -1,3 +1,5 @@
+use std::collections::BinaryHeap;
+use std::cmp::Reverse;
 use std::{fs::File, io::BufRead};
 use std::io::{BufReader, Write};
 use std::mem::size_of_val;
@@ -102,6 +104,7 @@ fn offload_to_file<T: Serialize>(object: &T, filename: &str) -> Result<(), Box<d
     let mut f = File::create(filename)?;
     offload(object, &mut f)
 }
+#[cfg(feature = "binary-format")]
 fn offload<T: Serialize>(object: &T, f: &mut File) -> Result<(), Box<dyn std::error::Error>> {
     // let ser = bincode::serialize(object)?; // bincode
     let ser = rmp_serde::to_vec(object)?; // messagepack
@@ -118,6 +121,23 @@ fn offload<T: Serialize>(object: &T, f: &mut File) -> Result<(), Box<dyn std::er
 
 }
 
+#[cfg(feature = "human-format")]
+fn offload<T: Serialize>(object: &T, f: &mut File) -> Result<(), Box<dyn std::error::Error>> {
+    // let ser = bincode::serialize(object)?; // bincode
+    // let ser = rmp_serde::to_vec(object)?; // messagepack
+    let ser = serde_json::to_vec(object)?; // json
+    // let mut f = File::create(filename)?;
+    f.write_all(&ser)?;
+    Ok(())
+    // let mut encoder = lz4::EncoderBuilder::new().level(1).build(f)?;
+    // encoder.write_all(&ser)?;
+    // let (_, result) = encoder.finish();
+    // result?;
+    // Ok(())
+
+
+}
+#[cfg(feature = "binary-format")]
 fn reload_to_mem<T: serde::de::DeserializeOwned>(filename: &str) -> Result<T, Box<dyn std::error::Error>> {
     let f = File::open(filename)?;
     let reader = BufReader::new(f);
@@ -127,11 +147,20 @@ fn reload_to_mem<T: serde::de::DeserializeOwned>(filename: &str) -> Result<T, Bo
     // Ok(bincode::deserialize_from(reader)?) // bincode
 }
 
+#[cfg(feature = "human-format")]
+fn reload_to_mem<T: serde::de::DeserializeOwned>(filename: &str) -> Result<T, Box<dyn std::error::Error>> {
+    let f = File::open(filename)?;
+    let reader = BufReader::new(f);
+    // let mut lz4_reader = lz4::Decoder::new(reader)?;
+    Ok(serde_json::from_reader(reader)?) // json
+    // Ok(rmp_serde::from_read(lz4_reader)?) // messagepack
+    // Ok(bincode::deserialize_from(reader)?) // bincode
+}
 fn build_inverted_index_and_lexicon(){
     // read in term_to_term_ID mapping
     let term_ID_to_term: BTreeMap<u32, String> = reload_to_mem("term_ID_to_term.tmp").unwrap();
 
-    let postings: Vec<Posting> = reload_to_mem("merged_postings.tmp").unwrap();
+    // let postings: Vec<Posting> = reload_to_mem("merged_postings.tmp").unwrap();
     let postings: Vec<Posting> = read_vector_of_postings("merged_postings.tmp");
     let mut lexicon: BTreeMap<String, LexiconValue> = BTreeMap::new(); // term to start index in inverted index
     let mut cur_inverted_list: Vec<(u32, u32)> = Vec::new();
@@ -276,15 +305,13 @@ fn parse() {
 
     offload_to_file(&term_to_term_ID, "term_to_term_ID.tmp").unwrap();
 }
-use std::collections::BinaryHeap;
-use std::cmp::Reverse;
 fn main() {
-    let mut cache = CachedFile::new("merged_postings.tmp");
-    let a = cache.forward(10);
-    println!("{:?}", a);
-    let a = cache.forward(10);
-    println!("{:?}", a);
-    // parse();
+    // let mut cache = CachedFile::new("merged_postings.tmp");
+    // let a = cache.forward(10);
+    // println!("{:?}", a);
+    // let a = cache.forward(10);
+    // println!("{:?}", a);
+    parse();
     // k_way_merge();
     // build_inverted_index_and_lexicon();
     // let mut heap = BinaryHeap::new();
