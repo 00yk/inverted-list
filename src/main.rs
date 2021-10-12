@@ -16,6 +16,69 @@ struct Posting {
     doc_ID: u32,
     freq: u32  // use percentage or num count?
 }
+fn dump_vector_of_postings(posting_vec: &Vec<Posting>, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut f = File::create(filename)?;
+    // let mut buf: Vec<u8> = Vec::new();
+    let mut buf: Vec<String> = Vec::new();
+    for p in posting_vec {
+        // TODO: use batched write bytes
+        // buf.extend_from_slice(&p.term_ID.to_ne_bytes());
+        // buf.extend_from_slice(&p.doc_ID.to_ne_bytes());
+        // buf.extend_from_slice(&p.freq.to_ne_bytes());
+        buf.push(format!("{} {} {}", p.term_ID, p.doc_ID, p.freq));
+        if buf.len() >= 204800  {
+            let joined_s = buf.join("\n");
+            f.write_all(joined_s.as_bytes())?;
+            buf.clear();
+        }
+
+        // writeln!(&mut f, "{} {} {}", p.term_ID, p.doc_ID, p.freq)?;
+    }
+    let joined_s = buf.join("\n");
+    f.write_all(&joined_s.as_bytes())?;
+    Ok(())
+}
+struct CachedFile {
+    buf: std::io::Lines<BufReader<File>>
+}
+impl CachedFile {
+    fn new(filename: &str) -> Self {
+        let f = File::open(filename).unwrap();
+        let r = BufReader::new(f);
+        CachedFile {
+            buf: r.lines(),
+        }
+    }
+    fn forward(&mut self, num: u32) -> Vec<Posting> {
+        let mut res = Vec::new();
+        let mut cnt = 0;
+        while let Some(line) = self.buf.next() {
+            if let Ok(content) = line {
+                let v = content.split_whitespace().map(|e| e.parse::<u32>().unwrap()).collect::<Vec<u32>>();
+                res.push(Posting { term_ID: v[0], doc_ID: v[1], freq: v[2] });
+                cnt += 1;
+                if cnt == num {
+                    break;
+                }
+            }
+        }
+        res
+    }
+
+}
+fn read_vector_of_postings(filename: &str) -> Vec<Posting>{
+    let f = File::open(filename).unwrap();
+    let r = BufReader::new(f);
+    let mut res: Vec<Posting> = Vec::new();
+    let forwarder = r.lines();
+    for line in forwarder {
+        if let Ok(content) = line {
+            let v = content.split_whitespace().map(|e| e.parse::<u32>().unwrap()).collect::<Vec<u32>>();
+             res.push(Posting { term_ID: v[0], doc_ID: v[1], freq: v[2] });
+        }
+    }
+    res
+}
 fn dump_tmp_file(posting_vec: &mut Vec<Posting>) {
     // println!("{}", size_of_val(&*posting_vec));
     // in-mem sort posting vec
@@ -23,14 +86,15 @@ fn dump_tmp_file(posting_vec: &mut Vec<Posting>) {
     let mut now: String = chrono::offset::Utc::now().to_string();
     now.push_str(".tmp");
 
-    offload_to_file(&posting_vec, &now).unwrap();
+    dump_vector_of_postings(&posting_vec, &now).unwrap();
+    // offload_to_file(&posting_vec, &now).unwrap();
 }
 #[derive(Serialize, Deserialize)]
 struct LexiconValue {
     pos: u32,
     len: u32,
 }
-fn merge_sort_postings() {
+fn k_way_merge() {
 
 }
 
@@ -68,6 +132,7 @@ fn build_inverted_index_and_lexicon(){
     let term_ID_to_term: BTreeMap<u32, String> = reload_to_mem("term_ID_to_term.tmp").unwrap();
 
     let postings: Vec<Posting> = reload_to_mem("merged_postings.tmp").unwrap();
+    let postings: Vec<Posting> = read_vector_of_postings("merged_postings.tmp");
     let mut lexicon: BTreeMap<String, LexiconValue> = BTreeMap::new(); // term to start index in inverted index
     let mut cur_inverted_list: Vec<(u32, u32)> = Vec::new();
     let mut num_inverted_list = 0;
@@ -144,7 +209,7 @@ fn parse() {
 
             //assert_eq!(flow, 3);
             flow = 4;
-            if cnt > 3000000 * num_dumped_files { // roughly 1.21GB for default json serialization
+            if cnt > 18750000 * num_dumped_files { // roughly 1.21GB for default json serialization
                 num_dumped_files += 1;
                 // dump this file
                 dump_tmp_file(&mut posting_vec);
@@ -211,8 +276,23 @@ fn parse() {
 
     offload_to_file(&term_to_term_ID, "term_to_term_ID.tmp").unwrap();
 }
+use std::collections::BinaryHeap;
+use std::cmp::Reverse;
 fn main() {
-    parse();
-    merge_sort_postings();
-    build_inverted_index_and_lexicon();
+    let mut cache = CachedFile::new("merged_postings.tmp");
+    let a = cache.forward(10);
+    println!("{:?}", a);
+    let a = cache.forward(10);
+    println!("{:?}", a);
+    // parse();
+    // k_way_merge();
+    // build_inverted_index_and_lexicon();
+    // let mut heap = BinaryHeap::new();
+    // heap.push(Reverse("abc"));
+    // heap.push(Reverse("apple"));
+    // heap.push(Reverse("zebra"));
+    // assert_eq!(heap.pop(), Some(Reverse("abc")));
+    // assert_eq!(heap.pop(), Some(Reverse("apple")));
+    // assert_eq!(heap.pop(), Some(Reverse("zebra")));
+
 }
