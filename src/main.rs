@@ -3,8 +3,6 @@ use std::io::{BufReader, Write};
 use std::mem::size_of_val;
 use std::collections::BTreeMap;
 
-use quick_xml::Reader;
-
 use serde::{Serialize, Deserialize};
 
 fn indent(size: usize) -> String {
@@ -18,7 +16,7 @@ struct Posting {
     doc_ID: u32,
     freq: u32  // use percentage or num count?
 }
-fn dump_to_file(posting_vec: &mut Vec<Posting>) {
+fn dump_tmp_file(posting_vec: &mut Vec<Posting>) {
     // println!("{}", size_of_val(&*posting_vec));
     // in-mem sort posting vec
     posting_vec.sort();
@@ -40,16 +38,44 @@ fn merge_sort_postings() {
 }
 
 fn offload_to_file<T: Serialize>(object: &T, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let ser = bincode::serialize(object)?;
+    // // let ser = bincode::serialize(object)?; // bincode
+    // let ser = rmp_serde::to_vec(object)?; // messagepack
+    // // let ser = serde_json::to_vec(object)?; // json
+    // let mut f = File::create(filename)?;
+    // // f.write_all(&ser)?;
+    // // Ok(())
+    // // use lz4 compression
+    // let mut encoder = lz4::EncoderBuilder::new().level(1).build(f)?;
+    // encoder.write_all(&ser)?;
+    // let (_, result) = encoder.finish();
+    // result?;
+    // Ok(())
     let mut f = File::create(filename)?;
-    f.write_all(&ser)?;
+    offload(object, &mut f)
+}
+fn offload<T: Serialize>(object: &T, f: &mut File) -> Result<(), Box<dyn std::error::Error>> {
+    // let ser = bincode::serialize(object)?; // bincode
+    let ser = rmp_serde::to_vec(object)?; // messagepack
+    // let ser = serde_json::to_vec(object)?; // json
+    // let mut f = File::create(filename)?;
+    // file.write_all(&ser)?;
+    // Ok(())
+    let mut encoder = lz4::EncoderBuilder::new().level(1).build(f)?;
+    encoder.write_all(&ser)?;
+    let (_, result) = encoder.finish();
+    result?;
     Ok(())
+
+
 }
 
 fn reload_to_mem<T: serde::de::DeserializeOwned>(filename: &str) -> Result<T, Box<dyn std::error::Error>> {
     let f = File::open(filename)?;
     let reader = BufReader::new(f);
-    Ok(bincode::deserialize_from(reader)?)
+    let mut lz4_reader = lz4::Decoder::new(reader)?;
+    // Ok(serde_json::from_reader(reader)?) // json
+    Ok(rmp_serde::from_read(lz4_reader)?) // messagepack
+    // Ok(bincode::deserialize_from(reader)?) // bincode
 }
 
 fn build_inverted_index_and_lexicon(){
@@ -59,11 +85,13 @@ fn build_inverted_index_and_lexicon(){
     // let term_ID_to_term: BTreeMap<u32, String> = serde_json::from_reader(reader).unwrap(); // assume can be read entirely to DRAM
     let term_ID_to_term: BTreeMap<u32, String> = reload_to_mem("term_ID_to_term.tmp").unwrap();
 
-    let f = File::open("merged_postings.tmp").unwrap();
-    let reader = BufReader::new(f);
-    // this posting will be consumed in the for loop
-    // let postings: Vec<Posting> = serde_json::from_reader(reader).unwrap(); // assume can be read entirely to DRAM
-    let postings: Vec<Posting> = bincode::deserialize_from(reader).unwrap(); // assume can be read entirely to DRAM
+    // let f = File::open("merged_postings.tmp").unwrap();
+    // let reader = BufReader::new(f);
+    // // this posting will be consumed in the for loop
+    // // let postings: Vec<Posting> = serde_json::from_reader(reader).unwrap(); // assume can be read entirely to DRAM
+    // // let postings: Vec<Posting> = bincode::deserialize_from(reader).unwrap(); // assume can be read entirely to DRAM
+    // let postings: Vec<Posting> = rmp_serde::from_read(reader).unwrap(); // assume can be read entirely to DRAM
+    let postings: Vec<Posting> = reload_to_mem("merged_postings.tmp").unwrap();
     let mut lexicon: BTreeMap<String, LexiconValue> = BTreeMap::new(); // term to start index in inverted index
     let mut cur_inverted_list: Vec<(u32, u32)> = Vec::new();
     let mut num_inverted_list = 0;
@@ -80,8 +108,9 @@ fn build_inverted_index_and_lexicon(){
         else {
             println!("Dumping {}: {:?}", word, cur_inverted_list);
             // dump_inverted_list(&cur_inverted_list);
-            let serialized = serde_json::to_vec(&cur_inverted_list).unwrap();
-            f.write_all(&serialized).unwrap();
+            // let serialized = serde_json::to_vec(&cur_inverted_list).unwrap();
+            // f.write_all(&serialized).unwrap();
+            offload(&cur_inverted_list, &mut f).unwrap();
             // if this a new inverted list
             // insert this term into lexicon first with
             lexicon.insert(word.clone(), LexiconValue { pos: num_inverted_list, len: 0 });
@@ -93,9 +122,10 @@ fn build_inverted_index_and_lexicon(){
             cur_inverted_list.push((p.doc_ID, p.freq));
         }
     }
-    let mut f = File::create("lexicon.tmp").unwrap();
-    let ser = serde_json::to_vec(&lexicon).unwrap();
-    f.write_all(&ser).unwrap();
+    // let mut f = File::create("lexicon.tmp").unwrap();
+    // let ser = serde_json::to_vec(&lexicon).unwrap();
+    // f.write_all(&ser).unwrap();
+    offload_to_file(&lexicon, "lexicon.tmp").unwrap();
 }
 fn dump_dict(doc_ID: u32, dict: BTreeMap<String, u32>, vec: &mut Vec<Posting>, term_to_term_ID: &BTreeMap<String, u32>) {
      // dumping [word]freq to Vec<Posting>
@@ -146,7 +176,7 @@ fn parse() {
             if cnt > 3000000 * num_dumped_files { // roughly 1.21GB for default json serialization
                 num_dumped_files += 1;
                 // dump this file
-                dump_to_file(&mut posting_vec);
+                dump_tmp_file(&mut posting_vec);
                 posting_vec = Vec::new(); // reinit posting vec
             }
             continue;
@@ -201,7 +231,7 @@ fn parse() {
             }
         }
     }
-    dump_to_file(&mut posting_vec);
+    dump_tmp_file(&mut posting_vec);
     // dump page table;
     // let serialized = serde_json::to_vec(&page_table).unwrap();
     // let mut f = File::create("page_table.tmp").expect("Unable to create file");
