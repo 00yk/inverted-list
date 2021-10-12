@@ -22,10 +22,7 @@ fn dump_tmp_file(posting_vec: &mut Vec<Posting>) {
     posting_vec.sort();
     let mut now: String = chrono::offset::Utc::now().to_string();
     now.push_str(".tmp");
-    // let serialized = serde_json::to_vec(posting_vec).unwrap();
-    // let serialized = bincode::serialize(posting_vec).unwrap();
-    // let mut f = File::create(now).expect("Unable to create file");
-    // f.write_all(&serialized).unwrap();
+
     offload_to_file(&posting_vec, &now).unwrap();
 }
 #[derive(Serialize, Deserialize)]
@@ -38,18 +35,6 @@ fn merge_sort_postings() {
 }
 
 fn offload_to_file<T: Serialize>(object: &T, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
-    // // let ser = bincode::serialize(object)?; // bincode
-    // let ser = rmp_serde::to_vec(object)?; // messagepack
-    // // let ser = serde_json::to_vec(object)?; // json
-    // let mut f = File::create(filename)?;
-    // // f.write_all(&ser)?;
-    // // Ok(())
-    // // use lz4 compression
-    // let mut encoder = lz4::EncoderBuilder::new().level(1).build(f)?;
-    // encoder.write_all(&ser)?;
-    // let (_, result) = encoder.finish();
-    // result?;
-    // Ok(())
     let mut f = File::create(filename)?;
     offload(object, &mut f)
 }
@@ -80,17 +65,8 @@ fn reload_to_mem<T: serde::de::DeserializeOwned>(filename: &str) -> Result<T, Bo
 
 fn build_inverted_index_and_lexicon(){
     // read in term_to_term_ID mapping
-    // let f = File::open("term_ID_to_term.tmp").unwrap();
-    // let reader = BufReader::new(f);
-    // let term_ID_to_term: BTreeMap<u32, String> = serde_json::from_reader(reader).unwrap(); // assume can be read entirely to DRAM
     let term_ID_to_term: BTreeMap<u32, String> = reload_to_mem("term_ID_to_term.tmp").unwrap();
 
-    // let f = File::open("merged_postings.tmp").unwrap();
-    // let reader = BufReader::new(f);
-    // // this posting will be consumed in the for loop
-    // // let postings: Vec<Posting> = serde_json::from_reader(reader).unwrap(); // assume can be read entirely to DRAM
-    // // let postings: Vec<Posting> = bincode::deserialize_from(reader).unwrap(); // assume can be read entirely to DRAM
-    // let postings: Vec<Posting> = rmp_serde::from_read(reader).unwrap(); // assume can be read entirely to DRAM
     let postings: Vec<Posting> = reload_to_mem("merged_postings.tmp").unwrap();
     let mut lexicon: BTreeMap<String, LexiconValue> = BTreeMap::new(); // term to start index in inverted index
     let mut cur_inverted_list: Vec<(u32, u32)> = Vec::new();
@@ -108,8 +84,6 @@ fn build_inverted_index_and_lexicon(){
         else {
             println!("Dumping {}: {:?}", word, cur_inverted_list);
             // dump_inverted_list(&cur_inverted_list);
-            // let serialized = serde_json::to_vec(&cur_inverted_list).unwrap();
-            // f.write_all(&serialized).unwrap();
             offload(&cur_inverted_list, &mut f).unwrap();
             // if this a new inverted list
             // insert this term into lexicon first with
@@ -122,9 +96,6 @@ fn build_inverted_index_and_lexicon(){
             cur_inverted_list.push((p.doc_ID, p.freq));
         }
     }
-    // let mut f = File::create("lexicon.tmp").unwrap();
-    // let ser = serde_json::to_vec(&lexicon).unwrap();
-    // f.write_all(&ser).unwrap();
     offload_to_file(&lexicon, "lexicon.tmp").unwrap();
 }
 fn dump_dict(doc_ID: u32, dict: BTreeMap<String, u32>, vec: &mut Vec<Posting>, term_to_term_ID: &BTreeMap<String, u32>) {
@@ -233,20 +204,11 @@ fn parse() {
     }
     dump_tmp_file(&mut posting_vec);
     // dump page table;
-    // let serialized = serde_json::to_vec(&page_table).unwrap();
-    // let mut f = File::create("page_table.tmp").expect("Unable to create file");
-    // f.write_all(&serialized).unwrap();
     offload_to_file(&term_ID_to_term, "page_table.tmp").unwrap();
 
     // dump term_ID_to_term mapping and term_to_term_ID mapping
-    // let ser = serde_json::to_vec(&term_ID_to_term).unwrap();
-    // let mut f = File::create("term_ID_to_term.tmp").expect("Unable to create file");
-    // f.write_all(&ser).unwrap();
     offload_to_file(&term_ID_to_term, "term_ID_to_term.tmp").unwrap();
 
-    // let ser = serde_json::to_vec(&term_to_term_ID).unwrap();
-    // let mut f = File::create("term_to_term_ID.tmp").expect("Unable to create file");
-    // f.write_all(&ser).unwrap();
     offload_to_file(&term_to_term_ID, "term_to_term_ID.tmp").unwrap();
 }
 fn main() {
