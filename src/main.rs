@@ -1,7 +1,7 @@
 use std::collections::BinaryHeap;
 use std::cmp::Reverse;
 use std::{fs::File, io::BufRead};
-use std::io::{BufReader, Write};
+use std::io::{BufReader, Read, Write};
 use std::mem::size_of_val;
 use std::collections::BTreeMap;
 
@@ -18,15 +18,11 @@ struct Posting {
     doc_ID: u32,
     freq: u32  // use percentage or num count?
 }
+#[cfg(not(feature = "binary-posting"))]
 fn dump_vector_of_postings(posting_vec: &Vec<Posting>, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut f = File::create(filename)?;
-    // let mut buf: Vec<u8> = Vec::new();
     let mut buf: Vec<String> = Vec::new();
     for p in posting_vec {
-        // TODO: use batched write bytes
-        // buf.extend_from_slice(&p.term_ID.to_ne_bytes());
-        // buf.extend_from_slice(&p.doc_ID.to_ne_bytes());
-        // buf.extend_from_slice(&p.freq.to_ne_bytes());
         buf.push(format!("{} {} {}", p.term_ID, p.doc_ID, p.freq));
         if buf.len() >= 204800  {
             let joined_s = buf.join("\n");
@@ -40,9 +36,28 @@ fn dump_vector_of_postings(posting_vec: &Vec<Posting>, filename: &str) -> Result
     f.write_all(&joined_s.as_bytes())?;
     Ok(())
 }
+
+#[cfg(feature = "binary-posting")]
+fn dump_vector_of_postings(posting_vec: &Vec<Posting>, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let mut f = File::create(filename)?;
+    let mut buf: Vec<u8> = Vec::new();
+    for p in posting_vec {
+        buf.extend_from_slice(&p.term_ID.to_ne_bytes());
+        buf.extend_from_slice(&p.doc_ID.to_ne_bytes());
+        buf.extend_from_slice(&p.freq.to_ne_bytes());
+        if buf.len() >= 204800  {
+            f.write_all(&buf)?;
+            buf.clear();
+        }
+    }
+    f.write_all(&buf)?;
+    Ok(())
+}
+#[cfg(not(feature = "binary-posting"))]
 struct CachedFile {
     buf: std::io::Lines<BufReader<File>>
 }
+#[cfg(not(feature = "binary-posting"))]
 impl CachedFile {
     fn new(filename: &str) -> Self {
         let f = File::open(filename).unwrap();
@@ -51,10 +66,12 @@ impl CachedFile {
             buf: r.lines(),
         }
     }
-    fn forward(&mut self, num: u32) -> Vec<Posting> {
+    fn forward(&mut self, num: u32) -> Option<Vec<Posting>> {
         let mut res = Vec::new();
         let mut cnt = 0;
+        let mut ok = false;
         while let Some(line) = self.buf.next() {
+            ok = true;
             if let Ok(content) = line {
                 let v = content.split_whitespace().map(|e| e.parse::<u32>().unwrap()).collect::<Vec<u32>>();
                 res.push(Posting { term_ID: v[0], doc_ID: v[1], freq: v[2] });
@@ -64,9 +81,49 @@ impl CachedFile {
                 }
             }
         }
-        res
+        if !ok {
+            return None;
+        }
+        Some(res)
     }
 
+}
+
+#[cfg(feature = "binary-posting")]
+struct CachedFile {
+    buf: BufReader<File>
+}
+#[cfg(feature = "binary-posting")]
+impl CachedFile {
+    fn new(filename: &str) -> Self {
+        let f = File::open(filename).unwrap();
+        let r = BufReader::new(f);
+        CachedFile {
+            buf: r,
+        }
+    }
+    fn forward(&mut self, num: u32) -> Vec<Posting> {
+        let mut res = Vec::new();
+        let mut cnt = 0;
+        let num_bytes_to_read = 4 * num as usize;
+        let mut buffer = vec![0u8; num_bytes_to_read];
+        self.buf.read(&mut buffer).unwrap();
+
+
+        // not finished!
+        todo!();
+        // while let Some(line) = self.buf.next() {
+        //     if let Ok(content) = line {
+        //         let v = content.split_whitespace().map(|e| e.parse::<u32>().unwrap()).collect::<Vec<u32>>();
+        //         res.push(Posting { term_ID: v[0], doc_ID: v[1], freq: v[2] });
+        //         cnt += 1;
+        //         if cnt == num {
+        //             break;
+        //         }
+        //     }
+        // }
+        res
+    }
 }
 fn read_vector_of_postings(filename: &str) -> Vec<Posting>{
     let f = File::open(filename).unwrap();
@@ -89,7 +146,6 @@ fn dump_tmp_file(posting_vec: &mut Vec<Posting>) {
     now.push_str(".tmp");
 
     dump_vector_of_postings(&posting_vec, &now).unwrap();
-    // offload_to_file(&posting_vec, &now).unwrap();
 }
 #[derive(Serialize, Deserialize)]
 struct LexiconValue {
@@ -97,7 +153,7 @@ struct LexiconValue {
     len: u32,
 }
 fn k_way_merge() {
-
+    todo!()
 }
 
 fn offload_to_file<T: Serialize>(object: &T, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -121,7 +177,7 @@ fn offload<T: Serialize>(object: &T, f: &mut File) -> Result<(), Box<dyn std::er
 
 }
 
-#[cfg(feature = "human-format")]
+#[cfg(not(feature = "binary-format"))]
 fn offload<T: Serialize>(object: &T, f: &mut File) -> Result<(), Box<dyn std::error::Error>> {
     // let ser = bincode::serialize(object)?; // bincode
     // let ser = rmp_serde::to_vec(object)?; // messagepack
@@ -147,7 +203,7 @@ fn reload_to_mem<T: serde::de::DeserializeOwned>(filename: &str) -> Result<T, Bo
     // Ok(bincode::deserialize_from(reader)?) // bincode
 }
 
-#[cfg(feature = "human-format")]
+#[cfg(not(feature = "binary-format"))]
 fn reload_to_mem<T: serde::de::DeserializeOwned>(filename: &str) -> Result<T, Box<dyn std::error::Error>> {
     let f = File::open(filename)?;
     let reader = BufReader::new(f);
@@ -306,12 +362,16 @@ fn parse() {
     offload_to_file(&term_to_term_ID, "term_to_term_ID.tmp").unwrap();
 }
 fn main() {
-    // let mut cache = CachedFile::new("merged_postings.tmp");
-    // let a = cache.forward(10);
-    // println!("{:?}", a);
-    // let a = cache.forward(10);
-    // println!("{:?}", a);
-    parse();
+    // let mut f = File::open("1.tmp").unwrap();
+    // let mut buffer = vec![0u8;3];
+    // f.read(&mut buffer);
+    // println!("{:?}", buffer);
+
+    let mut cache = CachedFile::new("merged_postings.tmp");
+    while let Some(a) = cache.forward(10) {
+        println!("{:?}\n", a);
+    }
+    // parse();
     // k_way_merge();
     // build_inverted_index_and_lexicon();
     // let mut heap = BinaryHeap::new();
