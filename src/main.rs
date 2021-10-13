@@ -4,6 +4,7 @@ use std::{fs::File, io::BufRead};
 use std::io::{BufReader, Read, Write};
 use std::mem::size_of_val;
 use std::collections::BTreeMap;
+use std::collections::VecDeque;
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::Cursor;
 
@@ -68,15 +69,15 @@ impl CachedFile {
             buf: r.lines(),
         }
     }
-    fn forward(&mut self, num: u32) -> Option<Vec<Posting>> {
-        let mut res = Vec::new();
+    fn forward(&mut self, num: u32) -> Option<VecDeque<Posting>> {
+        let mut res = VecDeque::new();
         let mut cnt = 0;
         let mut ok = false;
         while let Some(line) = self.buf.next() {
             ok = true;
             if let Ok(content) = line {
                 let v = content.split_whitespace().map(|e| e.parse::<u32>().unwrap()).collect::<Vec<u32>>();
-                res.push(Posting { term_ID: v[0], doc_ID: v[1], freq: v[2] });
+                res.push_back(Posting { term_ID: v[0], doc_ID: v[1], freq: v[2] });
                 cnt += 1;
                 if cnt == num {
                     break;
@@ -104,11 +105,11 @@ impl CachedFile {
             buf: r,
         }
     }
-    fn forward(&mut self, num: u32) -> Option<Vec<Posting>> {
-        let mut res = Vec::new();
+    fn forward(&mut self, num: u32) -> Option<VecDeque<Posting>> {
+        let mut res = VecDeque::new();
         let mut cnt = 0;
         let num_bytes_to_read = 4 * 3 * num as u64;
-        println!("num_bytes_to_read {}", num_bytes_to_read);
+        // println!("num_bytes_to_read {}", num_bytes_to_read);
 
         let mut ok = false;
         if let Some(content) = read_n(&mut self.buf, num_bytes_to_read) {
@@ -124,7 +125,7 @@ impl CachedFile {
                 }
                 let doc_ID: u32 = rdr.read_u32::<LittleEndian>().unwrap();
                 let freq: u32 = rdr.read_u32::<LittleEndian>().unwrap();
-                res.push(Posting { term_ID: term_ID, doc_ID: doc_ID, freq: freq });
+                res.push_back(Posting { term_ID: term_ID, doc_ID: doc_ID, freq: freq });
             }
         }
         if !ok {
@@ -166,9 +167,32 @@ struct LexiconValue {
     pos: u32,
     len: u32,
 }
-fn k_way_merge() {
-    todo!()
-}
+// fn k_way_merge(files: Vec<String>) {
+//     // build reader
+//     let mut cached_files: Vec<CachedFile> = Vec::new();
+//     for f in files {
+//         cached_files.push(CachedFile::new(&f));
+//     }
+//     let mut heap: BinaryHeap<Posting> = BinaryHeap::new();
+//     // push heads to init priority queue
+//     let mut buf: Vec<Vec<Posting>> = Vec::new();
+//     for c in cached_files.iter_mut() {
+//         if let Some(postings_vec) = c.forward(5) {
+//             buf.push(postings_vec);
+//         }
+//     }
+//     for postings_vec in buf {
+
+//     }
+
+
+//     // heap.push(Reverse("abc"));
+//     // heap.push(Reverse("apple"));
+//     // heap.push(Reverse("zebra"));
+//     // assert_eq!(heap.pop(), Some(Reverse("abc")));
+//     // assert_eq!(heap.pop(), Some(Reverse("apple")));
+//     // assert_eq!(heap.pop(), Some(Reverse("zebra")));
+// }
 
 fn offload_to_file<T: Serialize>(object: &T, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut f = File::create(filename)?;
@@ -308,7 +332,8 @@ fn parse() {
 
             //assert_eq!(flow, 3);
             flow = 4;
-            if cnt > 18750000 * num_dumped_files { // roughly 1.21GB for default json serialization
+            // 18750000
+            if cnt > 300 * num_dumped_files { // roughly 1.21GB for default json serialization
                 num_dumped_files += 1;
                 // dump this file
                 dump_tmp_file(&mut posting_vec);
@@ -381,10 +406,8 @@ where
 {
     let mut buf = vec![];
     let mut chunk = reader.take(bytes_to_read);
-    // Do appropriate error handling for your situation
-    // Maybe it's OK if you didn't read enough bytes?
     let n = chunk.read_to_end(&mut buf).expect("Didn't read enough");
-    // assert_eq!(bytes_to_read as usize, n);
+
     if n == 0 {
         return None;
     }
@@ -402,7 +425,7 @@ fn main() {
     posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
     dump_vector_of_postings(&posting_vec, "1.tmp").unwrap();
     let mut cache = CachedFile::new("1.tmp");
-    while let Some(v) = cache.forward(7) {
+    while let Some(v) = cache.forward(4) {
         println!("{:?}", v);
     }
     // let mut buffer = vec![0u8;10];
@@ -425,14 +448,11 @@ fn main() {
     //     println!("{:?}\n", a);
     // }
     // parse();
-    // k_way_merge();
+    // let f1 = "1.tmp".to_string();
+    // let f2 = "2.tmp".to_string();
+    // let f3 = "3.tmp".to_string();
+    // let f4 = "4.tmp".to_string();
+    // k_way_merge(vec![f1, f2, f3, f4]);
     // build_inverted_index_and_lexicon();
-    // let mut heap = BinaryHeap::new();
-    // heap.push(Reverse("abc"));
-    // heap.push(Reverse("apple"));
-    // heap.push(Reverse("zebra"));
-    // assert_eq!(heap.pop(), Some(Reverse("abc")));
-    // assert_eq!(heap.pop(), Some(Reverse("apple")));
-    // assert_eq!(heap.pop(), Some(Reverse("zebra")));
 
 }

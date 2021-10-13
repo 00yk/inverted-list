@@ -18,4 +18,4 @@ byteorder = "1.4.3"
 # human-format = []
 binary-format = []
 binary-posting = []
-default = ["binary-posting"]
+default = []
