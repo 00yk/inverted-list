@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::Cursor;
 
+use glob::glob;
 use serde::{Serialize, Deserialize};
 
 fn indent(size: usize) -> String {
@@ -158,7 +159,7 @@ fn dump_tmp_file(posting_vec: &mut Vec<Posting>) {
     // in-mem sort posting vec
     posting_vec.sort();
     let mut now: String = chrono::offset::Utc::now().to_string();
-    now.push_str(".tmp");
+    now.push_str(".intermediate");
 
     dump_vector_of_postings(&posting_vec, &now).unwrap();
 }
@@ -167,32 +168,88 @@ struct LexiconValue {
     pos: u32,
     len: u32,
 }
-// fn k_way_merge(files: Vec<String>) {
-//     // build reader
-//     let mut cached_files: Vec<CachedFile> = Vec::new();
-//     for f in files {
-//         cached_files.push(CachedFile::new(&f));
-//     }
-//     let mut heap: BinaryHeap<Posting> = BinaryHeap::new();
-//     // push heads to init priority queue
-//     let mut buf: Vec<Vec<Posting>> = Vec::new();
-//     for c in cached_files.iter_mut() {
-//         if let Some(postings_vec) = c.forward(5) {
-//             buf.push(postings_vec);
-//         }
-//     }
-//     for postings_vec in buf {
+// later change compare function to only consider posting
+#[derive(Ord, Eq, PartialOrd, PartialEq, Debug)]
+struct HeapNode {
+    p: Posting,
+    index: u8 // which queue it belongs to, k-way merge no more that 255-way
+}
+fn k_way_merge(files: Vec<String>) {
+    // build reader
+    let mut cached_files: Vec<CachedFile> = Vec::new();
+    for f in files {
+        cached_files.push(CachedFile::new(&f));
+    }
+    let mut heap: BinaryHeap<Reverse<HeapNode>> = BinaryHeap::new(); // min heap
+    // push heads to init priority queue
+    let mut buf: Vec<VecDeque<Posting>> = Vec::new();
+    for c in cached_files.iter_mut() {
+        if let Some(postings_deque) = c.forward(5) {
+            buf.push(postings_deque);
+        }
+        else {
+            unreachable!();
+        }
+    }
+    for (i, postings_deque) in buf.iter_mut().enumerate() {
+        if let Some(p) = postings_deque.pop_front() {
+            let heapnode = HeapNode { p: p, index: i as u8 };
+            heap.push(Reverse(heapnode));
+        }
+        else {
+            unreachable!();
+        }
+    }
+    let mut output_buf: Vec<Posting> = Vec::new();
+    while !heap.is_empty() {
+        if let Some(ele) = heap.pop() {
+            // println!("-------------Iteration-----------------------------");
+            let p = ele.0.p; // unwrap Reverse struct
+            let i = ele.0.index;
+            output_buf.push(p);
+            // push another element from the same queue
+            if let Some(p) = buf[i as usize].pop_front() {
+                let heapnode = HeapNode { p: p, index: i };
+                heap.push(Reverse(heapnode));
+            }
+            else {
+                // forward corresponding cachedfile to get a new queue
+                if let Some(posting_deque) = cached_files[i as usize].forward(5) {
+                    buf[i as usize] = posting_deque;
+                    // then push the front element to heap
+                    if let Some(p) = buf[i as usize].pop_front() {
+                        let heapnode = HeapNode { p: p, index: i };
+                        heap.push(Reverse(heapnode));
+                    }
+                    else {
+                        unreachable!();
+                    }
+                    // println!("#### newly forwarded deque: {:?}", buf[i as usize]);
+                }
+                else {
+                    // cachedfile is over, then leave empty queue where it is
+                }
+            }
+            // println!("output_buf: {:?}", output_buf);
+            // println!("heap: {:?}", heap);
+            // println!("queues: {:?}", buf);
+        }
+    }
+    // println!("*************over");
+    // println!("length of vector of posting: {}", output_buf.len());
+    // println!("output_buf: {:?}", output_buf);
+    // println!("heap: {:?}", heap);
+    // println!("queues: {:?}", buf);
+    dump_vector_of_postings(&output_buf, "merged_postings.tmp").unwrap();
 
-//     }
 
-
-//     // heap.push(Reverse("abc"));
-//     // heap.push(Reverse("apple"));
-//     // heap.push(Reverse("zebra"));
-//     // assert_eq!(heap.pop(), Some(Reverse("abc")));
-//     // assert_eq!(heap.pop(), Some(Reverse("apple")));
-//     // assert_eq!(heap.pop(), Some(Reverse("zebra")));
-// }
+    // heap.push(Reverse("abc"));
+    // heap.push(Reverse("apple"));
+    // heap.push(Reverse("zebra"));
+    // assert_eq!(heap.pop(), Some(Reverse("abc")));
+    // assert_eq!(heap.pop(), Some(Reverse("apple")));
+    // assert_eq!(heap.pop(), Some(Reverse("zebra")));
+}
 
 fn offload_to_file<T: Serialize>(object: &T, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut f = File::create(filename)?;
@@ -391,7 +448,10 @@ fn parse() {
             }
         }
     }
-    dump_tmp_file(&mut posting_vec);
+    // dump remainingi posting vec
+    if posting_vec.len() != 0 {
+        dump_tmp_file(&mut posting_vec);
+    }
     // dump page table;
     offload_to_file(&term_ID_to_term, "page_table.tmp").unwrap();
 
@@ -416,18 +476,18 @@ where
 fn main() {
     // let mut f = File::open("1.tmp").unwrap();
     // let mut r = BufReader::new(f);
-    let mut posting_vec = vec![];
-    posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
-    posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
-    posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
-    posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
-    posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
-    posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
-    dump_vector_of_postings(&posting_vec, "1.tmp").unwrap();
-    let mut cache = CachedFile::new("1.tmp");
-    while let Some(v) = cache.forward(4) {
-        println!("{:?}", v);
-    }
+    // let mut posting_vec = vec![];
+    // posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
+    // posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
+    // posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
+    // posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
+    // posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
+    // posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
+    // dump_vector_of_postings(&posting_vec, "1.tmp").unwrap();
+    // let mut cache = CachedFile::new("1.tmp");
+    // while let Some(v) = cache.forward(4) {
+    //     println!("{:?}", v);
+    // }
     // let mut buffer = vec![0u8;10];
     // let ret = r.read(&mut buffer);
     // while let Some(content) = read_n(&mut r, 10) {
@@ -447,12 +507,26 @@ fn main() {
     // while let Some(a) = cache.forward(10) {
     //     println!("{:?}\n", a);
     // }
-    // parse();
+    // println!("{:?}", fvec);
+    parse();
+    let mut fvec = Vec::new();
+    for entry in glob("./*.intermediate").expect("Failed to glob pattern") {
+        match entry {
+            Ok(path) => {
+                // println!("{:?}", path.display());
+                if let Some(filename) = path.to_str() {
+                    fvec.push(filename.to_string());
+                }
+            }
+            Err(e) => println!("{:?}", e),
+        }
+    }
     // let f1 = "1.tmp".to_string();
     // let f2 = "2.tmp".to_string();
     // let f3 = "3.tmp".to_string();
     // let f4 = "4.tmp".to_string();
-    // k_way_merge(vec![f1, f2, f3, f4]);
-    // build_inverted_index_and_lexicon();
+    k_way_merge(fvec);
+    // k_way_merge(vec![f1, f2]);
+    build_inverted_index_and_lexicon();
 
 }
