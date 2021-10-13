@@ -47,6 +47,7 @@ name = "inverted-list"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "byteorder",
  "chrono",
  "lz4",
  "rmp-serde",

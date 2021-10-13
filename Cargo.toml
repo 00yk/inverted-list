@@ -12,9 +12,10 @@ chrono = "0.4"
 bincode = "1.3.3"
 rmp-serde = "0.15.5"
 lz4 = "1.23.2"
+byteorder = "1.4.3"
 
 [features]
 # human-format = []
 binary-format = []
 binary-posting = []
-default = []
+default = ["binary-posting"]

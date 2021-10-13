@@ -4,6 +4,8 @@ use std::{fs::File, io::BufRead};
 use std::io::{BufReader, Read, Write};
 use std::mem::size_of_val;
 use std::collections::BTreeMap;
+use byteorder::{LittleEndian, ReadBytesExt};
+use std::io::Cursor;
 
 use serde::{Serialize, Deserialize};
 
@@ -42,9 +44,9 @@ fn dump_vector_of_postings(posting_vec: &Vec<Posting>, filename: &str) -> Result
     let mut f = File::create(filename)?;
     let mut buf: Vec<u8> = Vec::new();
     for p in posting_vec {
-        buf.extend_from_slice(&p.term_ID.to_ne_bytes());
-        buf.extend_from_slice(&p.doc_ID.to_ne_bytes());
-        buf.extend_from_slice(&p.freq.to_ne_bytes());
+        buf.extend_from_slice(&p.term_ID.to_le_bytes());
+        buf.extend_from_slice(&p.doc_ID.to_le_bytes());
+        buf.extend_from_slice(&p.freq.to_le_bytes());
         if buf.len() >= 204800  {
             f.write_all(&buf)?;
             buf.clear();
@@ -102,28 +104,40 @@ impl CachedFile {
             buf: r,
         }
     }
-    fn forward(&mut self, num: u32) -> Vec<Posting> {
+    fn forward(&mut self, num: u32) -> Option<Vec<Posting>> {
         let mut res = Vec::new();
         let mut cnt = 0;
-        let num_bytes_to_read = 4 * num as usize;
-        let mut buffer = vec![0u8; num_bytes_to_read];
-        self.buf.read(&mut buffer).unwrap();
+        let num_bytes_to_read = 4 * 3 * num as u64;
+        println!("num_bytes_to_read {}", num_bytes_to_read);
 
-
-        // not finished!
-        todo!();
-        // while let Some(line) = self.buf.next() {
-        //     if let Ok(content) = line {
-        //         let v = content.split_whitespace().map(|e| e.parse::<u32>().unwrap()).collect::<Vec<u32>>();
-        //         res.push(Posting { term_ID: v[0], doc_ID: v[1], freq: v[2] });
-        //         cnt += 1;
-        //         if cnt == num {
-        //             break;
-        //         }
-        //     }
-        // }
-        res
+        let mut ok = false;
+        if let Some(content) = read_n(&mut self.buf, num_bytes_to_read) {
+            ok = true;
+            let mut rdr = Cursor::new(content);
+            for i in 0..num {
+                let term_ID;
+                if let Ok(n) = rdr.read_u32::<LittleEndian>() {
+                    term_ID = n;
+                }
+                else {
+                    break;
+                }
+                let doc_ID: u32 = rdr.read_u32::<LittleEndian>().unwrap();
+                let freq: u32 = rdr.read_u32::<LittleEndian>().unwrap();
+                res.push(Posting { term_ID: term_ID, doc_ID: doc_ID, freq: freq });
+            }
+        }
+        if !ok {
+            return None;
+        }
+        Some(res)
     }
+}
+fn read_le_u32(input: &mut &[u8]) -> u32 {
+    use std::convert::TryInto;
+    let (int_bytes, rest) = input.split_at(std::mem::size_of::<u32>());
+    *input = rest;
+    u32::from_le_bytes(int_bytes.try_into().unwrap())
 }
 fn read_vector_of_postings(filename: &str) -> Vec<Posting>{
     let f = File::open(filename).unwrap();
@@ -361,16 +375,55 @@ fn parse() {
 
     offload_to_file(&term_to_term_ID, "term_to_term_ID.tmp").unwrap();
 }
+fn read_n<R>(reader: R, bytes_to_read: u64) -> Option<Vec<u8>>
+where
+    R: Read,
+{
+    let mut buf = vec![];
+    let mut chunk = reader.take(bytes_to_read);
+    // Do appropriate error handling for your situation
+    // Maybe it's OK if you didn't read enough bytes?
+    let n = chunk.read_to_end(&mut buf).expect("Didn't read enough");
+    // assert_eq!(bytes_to_read as usize, n);
+    if n == 0 {
+        return None;
+    }
+    Some(buf)
+}
 fn main() {
     // let mut f = File::open("1.tmp").unwrap();
-    // let mut buffer = vec![0u8;3];
-    // f.read(&mut buffer);
-    // println!("{:?}", buffer);
-
-    let mut cache = CachedFile::new("merged_postings.tmp");
-    while let Some(a) = cache.forward(10) {
-        println!("{:?}\n", a);
+    // let mut r = BufReader::new(f);
+    let mut posting_vec = vec![];
+    posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
+    posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
+    posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
+    posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
+    posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
+    posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
+    dump_vector_of_postings(&posting_vec, "1.tmp").unwrap();
+    let mut cache = CachedFile::new("1.tmp");
+    while let Some(v) = cache.forward(7) {
+        println!("{:?}", v);
     }
+    // let mut buffer = vec![0u8;10];
+    // let ret = r.read(&mut buffer);
+    // while let Some(content) = read_n(&mut r, 10) {
+    //     println!("{:?}", content);
+    // }
+    // while let Ok(n) = r.read(&mut buffer) {
+    //     if n == 0 {
+    //         println!("read 0 bytes");
+    //         break;
+    //     }
+    //     println!("{:?}", n);
+    //     println!("{:?}", buffer);
+    //     buffer.clear();
+    // }
+
+    // let mut cache = CachedFile::new("merged_postings.tmp");
+    // while let Some(a) = cache.forward(10) {
+    //     println!("{:?}\n", a);
+    // }
     // parse();
     // k_way_merge();
     // build_inverted_index_and_lexicon();
