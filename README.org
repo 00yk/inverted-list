@@ -1,14 +1,93 @@
-#+TITLE: Readme
+#+TITLE: README
+#+latex_header: \hypersetup{colorlinks=true,linkcolor=blue}
 
-# This program is to create an inverted index in an I/O efficient manner, given ~20GB document file.
-* Index construction in three phase: parsing phase, merging phase, and index building phase
-** Parsing phase includes sequentially parse .trec file
-*** for each document, we track (term_ID, doc_ID, freq) tuples in a buffer and later saved to a intermediate file format to perform k-way merge.
-*** we also using a dictionary to keep doc_ID to URL mapping in memory, also the mappings between actual term and term_ID, these are saved in common serialization format for portability
-** Merging phase includes merge sorting all intermediate file in previous phase to a single file
-*** each intermediate file can be pre-sorted in memory before dumped to disk, so we just perform external k-way merge
-*** By using a self defined intermediate file format in previous step, we can customize partial read functionality of a large file
-**** We used `CachedFile` to its `forward` method to abstract the partial read behavior
+#+BEGIN_CENTER
+This program is to create an inverted index in an I/O efficient manner, given ~20GB document file.
+Remember to move msmarco-docs.trec to project.
+#+END_CENTER
+
+
+* Index construction in three phase
+parsing phase, merging phase, and index building phase
+** Parsing phase
+Sequentially parse .trec file
++ For each document, we track (term_ID, doc_ID, freq) tuples in a buffer and later saved to a intermediate file format to perform k-way merge.
++ I also use a dictionary to keep doc_ID to URL mapping in memory, also the mappings between actual term and term_ID, these are saved in common serialization format for portability.
+** Merging phase
+Merge sorting all intermediate files in previous phase to a single file
++ Each intermediate file can be pre-sorted in memory before dumped to disk, so we just perform external k-way merge.
++ By using a self defined intermediate file format in previous step, we can customize partial read functionality of a large file.
+I used ``CachedFile'' and its ``forward'' method to abstract the partial read behavior.
 ** Index building phase
-*** building inverted index by scan through the merged file in merging phase, and build inverted list one by one, and save as a similiar format as page_table, term_ID_to_term mapping, term_ID_to_term mapping, lexicon
-**** why batched compression talked in piazza/slides seems still questionable to me and left unimplemented: By experimenting, I observe that posting tuple has a long-tail distribution, which means there's so many word(may depends on tokenization) that only appears once, and using block to push postings of a single term together introduce overhead of metadata, the number of infrequent words will yields wasted space of metadata. If we consider another tokenization method that may benefits from, then we are introducing improvements that are tied to overall feature completeness and performance of the whole system, which is unfavorable to me.
+ Building inverted index by scan through the merged file in merging phase, and build inverted list one by one, and save as a similiar format as page-table, term_ID-to-term mapping, term_ID-to-term mapping, lexicon
+*** why batched compression talked in piazza/slides seems still questionable to me and left unimplemented
+By experimenting, I observed that posting tuples has a long-tail distribution, which means there's so many word(may depends on tokenization) that only appears once, and using block to push postings of a single term together introduce overhead of metadata, the number of infrequent words will yields wasted space of metadata. If we consider another tokenization method that may benefits from, then we are introducing improvements that are tied to overall feature completeness and performance of the whole system, which is unfavorable to me.
+* Major functions and possible bottlnecks
+** parse
+ Takes about ~45 minutes to save a intermediate file, and 16 files in total
+*** possible bottlenecks
+For each doc we move the word-count mapping to a buffer, the buffer is later write to a file. Maintaining term_ID-to-term mapping and term-to-term_ID mapping is time-consuming, whenever a new word is encountered, the word is inserted into the mapping
+*** design choices
+1) In parse phase, we directly generate postings while in another possible implementation, we can first generate (term_ID, doc_ID) pairs and saved to a intermediate file, then merge those pairs into a posting. The resulting design may have better performance, but I think it is totally dependent on the characteristics of given documents, i.e. if documents are large and contains same terms very often, then current design is fine.
+2) Also, keeping in memory term-to-term_ID, term_ID-to-term is demanding, but currently I haven't think out another solution.
+** k-way-merge
+ Takes a list of filenames, and read in chunks(``BATCH-SIZE'' number of postings) from each file, using a min heap to keep all heads of each chunk, then keep poping from the heap until it's empty, and whenever an item is popped from the heap, push the head of the same chunk it comes from, and whenever a chunk is empty, forward the file reader to return a another chunk from the same file unitl reached EOF.
+*** design choices
+1) Only supports one time merge rather than several times merge, because we could tune ``BATCH-SIZE'' to get better performance on the target machine, if we try to use multiple times merge, then there will be more hyperparameters to tune.
+2) Only supports 2-way merge up to 255-way merge, other cases are not considered by default, if you need that, take a serious look on your whole design.
+** build-inverted-index-and-lexicon
+Lexicon is built at this phase, because page-table can be determined in the parsing phase, but metadata about term couldn't be known until the inverted list of that term is built, so I built lexicon as well as the inverted index
+*** possible bottlneck
+each inverted list saved as soon as it's finished, but we can batched write a couple of inverted list at a time.
+*** design choices
+[[*why batched compression talked in piazza/slides seems still questionable to me and left unimplemented][why batched compression talked in piazza/slides seems still questionable to me and left unimplemented]]
+
+* How to run?
+Use ``cargo run --release''(don't use ``cargo run'', which uses debug build and might be 10x slower,[[*Ablation test][ see]])
+
+* Ablation test
+Enable features by ``cargo run --features=binary-posting,binary-format --release''.
+These tests are tested a on fraction(1e7 lines) of the original dataset(22GB) which is around 3e8 lines.
+
+|                        | debug build | release build |
+|------------------------+-------------+---------------|
+| parse time(secs)       | 1400        |           120 |
+| merge time(secs)       | not tested  |            16 |
+| build-index time(secs) | not tested  |            47 |
+
+|                        | default features | +binary-posting | +binary-posting,binary-format |
+|------------------------+------------------+-----------------+-------------------------------|
+| parse time(secs)       |              120 |             116 |                           119 |
+| merge time(secs)       |               16 |               3 |                             2 |
+| build-index time(secs) |               47 |              30 |                            48 |
+
+We can see from the above chart, binary-posting improves running time,
+and by combing binary-posting and binary-format features, we have similar running time compared
+to default version.
+
+|                   | default | +binary-posting |
+|-------------------+---------+-----------------|
+| postings size(MB) |     680 |             595 |
+
+|                          | default | +binary-format |
+|--------------------------+---------+----------------|
+| page-table size(MB)      |     7.9 |            5.1 |
+| term_ID-to-term size(MB) |     118 |             64 |
+| term-to-term_ID size(MB) |     108 |             63 |
+| lexicon size(MB)         |     186 |             65 |
+| inverted index size(MB)  |     501 |            347 |
+
+We can see that, both binary-posting and binary-format features improves the size of both intermediate files' and resulting files' sizes.
+
+* Report on original dataset
+I enabled both binary-posting and binary-format features to achievement proper expectation of runtime and final file size.
+|      | parse  | merge   | build-index |
+|------+--------+---------+-------------|
+| time | 98mins | 205secs | 21mins      |
+
+|      | page-table | term_ID-to-term | term-to-term_ID | lexicon | inverted-index |
+|------+------------+-----------------+-----------------+---------+----------------|
+| size | 152MB      | 972MB           | 904MB           | 953MB   | 8.3G           |
+
+** Reason why not strictly linear scale up compare to results in ablation test seciotn
+Use different hyperparameter, thus size of each intermediate posting files vary.
