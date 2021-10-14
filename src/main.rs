@@ -23,7 +23,7 @@ struct Posting {
     freq: u32  // use percentage or num count?
 }
 #[cfg(not(feature = "binary-posting"))]
-fn dump_vector_of_postings(posting_vec: &Vec<Posting>, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn offload_vector_of_postings(posting_vec: &Vec<Posting>, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut f = File::create(filename)?;
     let mut buf: Vec<String> = Vec::new();
     for p in posting_vec {
@@ -42,7 +42,7 @@ fn dump_vector_of_postings(posting_vec: &Vec<Posting>, filename: &str) -> Result
 }
 
 #[cfg(feature = "binary-posting")]
-fn dump_vector_of_postings(posting_vec: &Vec<Posting>, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn offload_vector_of_postings(posting_vec: &Vec<Posting>, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut f = File::create(filename)?;
     let mut buf: Vec<u8> = Vec::new();
     for p in posting_vec {
@@ -154,14 +154,14 @@ fn read_vector_of_postings(filename: &str) -> Vec<Posting>{
     }
     res
 }
-fn dump_tmp_file(posting_vec: &mut Vec<Posting>) {
+fn offload_tmp_file(posting_vec: &mut Vec<Posting>) {
     // println!("{}", size_of_val(&*posting_vec));
     // in-mem sort posting vec
     posting_vec.sort();
     let mut now: String = chrono::offset::Utc::now().to_string();
     now.push_str(".intermediate");
 
-    dump_vector_of_postings(&posting_vec, &now).unwrap();
+    offload_vector_of_postings(&posting_vec, &now).unwrap();
 }
 #[derive(Serialize, Deserialize)]
 struct LexiconValue {
@@ -240,7 +240,7 @@ fn k_way_merge(files: Vec<String>) {
     // println!("output_buf: {:?}", output_buf);
     // println!("heap: {:?}", heap);
     // println!("queues: {:?}", buf);
-    dump_vector_of_postings(&output_buf, "merged_postings.tmp").unwrap();
+    offload_vector_of_postings(&output_buf, "merged_postings.tmp").unwrap();
 
 
     // heap.push(Reverse("abc"));
@@ -251,12 +251,12 @@ fn k_way_merge(files: Vec<String>) {
     // assert_eq!(heap.pop(), Some(Reverse("zebra")));
 }
 
-fn offload_to_file<T: Serialize>(object: &T, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn dumping_to_file<T: Serialize>(object: &T, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut f = File::create(filename)?;
-    offload(object, &mut f)
+    dumping(object, &mut f)
 }
 #[cfg(feature = "binary-format")]
-fn offload<T: Serialize>(object: &T, f: &mut File) -> Result<(), Box<dyn std::error::Error>> {
+fn dumping<T: Serialize>(object: &T, f: &mut File) -> Result<(), Box<dyn std::error::Error>> {
     // let ser = bincode::serialize(object)?; // bincode
     let ser = rmp_serde::to_vec(object)?; // messagepack
     // let ser = serde_json::to_vec(object)?; // json
@@ -273,7 +273,7 @@ fn offload<T: Serialize>(object: &T, f: &mut File) -> Result<(), Box<dyn std::er
 }
 
 #[cfg(not(feature = "binary-format"))]
-fn offload<T: Serialize>(object: &T, f: &mut File) -> Result<(), Box<dyn std::error::Error>> {
+fn dumping<T: Serialize>(object: &T, f: &mut File) -> Result<(), Box<dyn std::error::Error>> {
     // let ser = bincode::serialize(object)?; // bincode
     // let ser = rmp_serde::to_vec(object)?; // messagepack
     let ser = serde_json::to_vec(object)?; // json
@@ -328,8 +328,8 @@ fn build_inverted_index_and_lexicon(){
         }
         else {
             println!("Dumping {}: {:?}", word, cur_inverted_list);
-            // dump_inverted_list(&cur_inverted_list);
-            offload(&cur_inverted_list, &mut f).unwrap();
+            // offload_inverted_list(&cur_inverted_list);
+            dumping(&cur_inverted_list, &mut f).unwrap();
             // if this a new inverted list
             // insert this term into lexicon first with
             lexicon.insert(word.clone(), LexiconValue { pos: num_inverted_list, len: 0 });
@@ -341,9 +341,9 @@ fn build_inverted_index_and_lexicon(){
             cur_inverted_list.push((p.doc_ID, p.freq));
         }
     }
-    offload_to_file(&lexicon, "lexicon.tmp").unwrap();
+    dumping_to_file(&lexicon, "lexicon.tmp").unwrap();
 }
-fn dump_dict(doc_ID: u32, dict: BTreeMap<String, u32>, vec: &mut Vec<Posting>, term_to_term_ID: &BTreeMap<String, u32>) {
+fn offload_dict(doc_ID: u32, dict: BTreeMap<String, u32>, vec: &mut Vec<Posting>, term_to_term_ID: &BTreeMap<String, u32>) {
      // dumping [word]freq to Vec<Posting>
      for (word, freq) in dict {
          let term_ID = *term_to_term_ID.get(&word).unwrap();
@@ -381,7 +381,7 @@ fn parse() {
             next_url = false;
 
             // dump dict for each docID
-            dump_dict(doc_count, word_count, &mut posting_vec, &term_to_term_ID);
+            offload_dict(doc_count, word_count, &mut posting_vec, &term_to_term_ID);
             word_count = BTreeMap::new();
 
             doc_count += 1;
@@ -393,7 +393,7 @@ fn parse() {
             if cnt > 300 * num_dumped_files { // roughly 1.21GB for default json serialization
                 num_dumped_files += 1;
                 // dump this file
-                dump_tmp_file(&mut posting_vec);
+                offload_tmp_file(&mut posting_vec);
                 posting_vec = Vec::new(); // reinit posting vec
             }
             continue;
@@ -450,15 +450,15 @@ fn parse() {
     }
     // dump remainingi posting vec
     if posting_vec.len() != 0 {
-        dump_tmp_file(&mut posting_vec);
+        offload_tmp_file(&mut posting_vec);
     }
     // dump page table;
-    offload_to_file(&term_ID_to_term, "page_table.tmp").unwrap();
+    dumping_to_file(&term_ID_to_term, "page_table.tmp").unwrap();
 
     // dump term_ID_to_term mapping and term_to_term_ID mapping
-    offload_to_file(&term_ID_to_term, "term_ID_to_term.tmp").unwrap();
+    dumping_to_file(&term_ID_to_term, "term_ID_to_term.tmp").unwrap();
 
-    offload_to_file(&term_to_term_ID, "term_to_term_ID.tmp").unwrap();
+    dumping_to_file(&term_to_term_ID, "term_to_term_ID.tmp").unwrap();
 }
 fn read_n<R>(reader: R, bytes_to_read: u64) -> Option<Vec<u8>>
 where
@@ -483,7 +483,7 @@ fn main() {
     // posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
     // posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
     // posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
-    // dump_vector_of_postings(&posting_vec, "1.tmp").unwrap();
+    // offload_vector_of_postings(&posting_vec, "1.tmp").unwrap();
     // let mut cache = CachedFile::new("1.tmp");
     // while let Some(v) = cache.forward(4) {
     //     println!("{:?}", v);
