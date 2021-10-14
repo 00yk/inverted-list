@@ -1,7 +1,7 @@
 use std::collections::BinaryHeap;
 use std::cmp::Reverse;
 use std::{fs::File, io::BufRead};
-use std::io::{BufReader, Read, Write};
+use std::io::{BufReader, Read, Write, BufWriter};
 use std::mem::size_of_val;
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
@@ -11,10 +11,6 @@ use std::io::Cursor;
 use glob::glob;
 use serde::{Serialize, Deserialize};
 
-fn indent(size: usize) -> String {
-    const INDENT: &'static str = "    ";
-    (0..size).map(|_| INDENT).fold(String::with_capacity(size*INDENT.len()), |r, s| r + s)
-}
 #[derive(Serialize, Deserialize, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct Posting {
     // word: String,
@@ -22,6 +18,8 @@ struct Posting {
     doc_ID: u32,
     freq: u32  // use percentage or num count?
 }
+
+/// batched write postings to intermediate format
 #[cfg(not(feature = "binary-posting"))]
 fn offload_vector_of_postings(posting_vec: &Vec<Posting>, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut f = File::create(filename)?;
@@ -57,6 +55,8 @@ fn offload_vector_of_postings(posting_vec: &Vec<Posting>, filename: &str) -> Res
     f.write_all(&buf)?;
     Ok(())
 }
+
+/// abstraction for partial read functionality used in external k-way merge
 #[cfg(not(feature = "binary-posting"))]
 struct CachedFile {
     buf: std::io::Lines<BufReader<File>>
@@ -135,12 +135,6 @@ impl CachedFile {
         Some(res)
     }
 }
-fn read_le_u32(input: &mut &[u8]) -> u32 {
-    use std::convert::TryInto;
-    let (int_bytes, rest) = input.split_at(std::mem::size_of::<u32>());
-    *input = rest;
-    u32::from_le_bytes(int_bytes.try_into().unwrap())
-}
 fn read_vector_of_postings(filename: &str) -> Vec<Posting>{
     let f = File::open(filename).unwrap();
     let r = BufReader::new(f);
@@ -155,7 +149,6 @@ fn read_vector_of_postings(filename: &str) -> Vec<Posting>{
     res
 }
 fn offload_tmp_file(posting_vec: &mut Vec<Posting>) {
-    // println!("{}", size_of_val(&*posting_vec));
     // in-mem sort posting vec
     posting_vec.sort();
     let mut now: String = chrono::offset::Utc::now().to_string();
@@ -163,18 +156,29 @@ fn offload_tmp_file(posting_vec: &mut Vec<Posting>) {
 
     offload_vector_of_postings(&posting_vec, &now).unwrap();
 }
+
 #[derive(Serialize, Deserialize)]
 struct LexiconValue {
     pos: u32,
     len: u32,
 }
+
 // later change compare function to only consider posting
 #[derive(Ord, Eq, PartialOrd, PartialEq, Debug)]
 struct HeapNode {
     p: Posting,
     index: u8 // which queue it belongs to, k-way merge no more that 255-way
 }
+
+/// external k way merge
 fn k_way_merge(files: Vec<String>) {
+    // 1-way-merge
+    if files.len() == 0 {
+        panic!("to-be merged files not found.");
+    }
+    if files.len() == 1 {
+        panic!("only a to-be merged file.");
+    }
     // build reader
     let mut cached_files: Vec<CachedFile> = Vec::new();
     for f in files {
@@ -183,8 +187,9 @@ fn k_way_merge(files: Vec<String>) {
     let mut heap: BinaryHeap<Reverse<HeapNode>> = BinaryHeap::new(); // min heap
     // push heads to init priority queue
     let mut buf: Vec<VecDeque<Posting>> = Vec::new();
+    let batch_size = 5;
     for c in cached_files.iter_mut() {
-        if let Some(postings_deque) = c.forward(5) {
+        if let Some(postings_deque) = c.forward(batch_size) {
             buf.push(postings_deque);
         }
         else {
@@ -214,7 +219,7 @@ fn k_way_merge(files: Vec<String>) {
             }
             else {
                 // forward corresponding cachedfile to get a new queue
-                if let Some(posting_deque) = cached_files[i as usize].forward(5) {
+                if let Some(posting_deque) = cached_files[i as usize].forward(batch_size) {
                     buf[i as usize] = posting_deque;
                     // then push the front element to heap
                     if let Some(p) = buf[i as usize].pop_front() {
@@ -242,27 +247,18 @@ fn k_way_merge(files: Vec<String>) {
     // println!("queues: {:?}", buf);
     offload_vector_of_postings(&output_buf, "merged_postings.tmp").unwrap();
 
-
-    // heap.push(Reverse("abc"));
-    // heap.push(Reverse("apple"));
-    // heap.push(Reverse("zebra"));
-    // assert_eq!(heap.pop(), Some(Reverse("abc")));
-    // assert_eq!(heap.pop(), Some(Reverse("apple")));
-    // assert_eq!(heap.pop(), Some(Reverse("zebra")));
 }
-
+/// helper function for ease of use
 fn dumping_to_file<T: Serialize>(object: &T, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut f = File::create(filename)?;
     dumping(object, &mut f)
 }
+
+/// used in pair with deserialize_to_mem
 #[cfg(feature = "binary-format")]
 fn dumping<T: Serialize>(object: &T, f: &mut File) -> Result<(), Box<dyn std::error::Error>> {
     // let ser = bincode::serialize(object)?; // bincode
     let ser = rmp_serde::to_vec(object)?; // messagepack
-    // let ser = serde_json::to_vec(object)?; // json
-    // let mut f = File::create(filename)?;
-    // file.write_all(&ser)?;
-    // Ok(())
     let mut encoder = lz4::EncoderBuilder::new().level(1).build(f)?;
     encoder.write_all(&ser)?;
     let (_, result) = encoder.finish();
@@ -274,44 +270,71 @@ fn dumping<T: Serialize>(object: &T, f: &mut File) -> Result<(), Box<dyn std::er
 
 #[cfg(not(feature = "binary-format"))]
 fn dumping<T: Serialize>(object: &T, f: &mut File) -> Result<(), Box<dyn std::error::Error>> {
-    // let ser = bincode::serialize(object)?; // bincode
-    // let ser = rmp_serde::to_vec(object)?; // messagepack
     let ser = serde_json::to_vec(object)?; // json
-    // let mut f = File::create(filename)?;
     f.write_all(&ser)?;
     Ok(())
-    // let mut encoder = lz4::EncoderBuilder::new().level(1).build(f)?;
-    // encoder.write_all(&ser)?;
-    // let (_, result) = encoder.finish();
-    // result?;
-    // Ok(())
 
 
 }
+// #[cfg(feature = "binary-format")]
+// fn dumping_batch<T: Serialize>(object: &T, f: &mut BufWriter) -> Result<(), Box<dyn std::error::Error>> {
+//     // let ser = bincode::serialize(object)?; // bincode
+//     let ser = rmp_serde::to_vec(object)?; // messagepack
+//     // let ser = serde_json::to_vec(object)?; // json
+//     // let mut f = File::create(filename)?;
+//     // file.write_all(&ser)?;
+//     // Ok(())
+//     let mut encoder = lz4::EncoderBuilder::new().level(1).build(f)?;
+//     encoder.write(&ser)?;
+//     let (_, result) = encoder.finish();
+//     result?;
+//     Ok(())
+
+
+// }
+
+// #[cfg(not(feature = "binary-format"))]
+// fn dumping_batch<T: Serialize>(object: &T, f: &mut BufWriter<W>) -> Result<(), Box<dyn std::error::Error>> {
+//     // let ser = bincode::serialize(object)?; // bincode
+//     // let ser = rmp_serde::to_vec(object)?; // messagepack
+//     let ser = serde_json::to_vec(object)?; // json
+//     // let mut f = File::create(filename)?;
+//     f.write(&ser)?;
+//     Ok(())
+//     // let mut encoder = lz4::EncoderBuilder::new().level(1).build(f)?;
+//     // encoder.write_all(&ser)?;
+//     // let (_, result) = encoder.finish();
+//     // result?;
+//     // Ok(())
+
+
+// }
+/// used in pair with dumping_to_file
 #[cfg(feature = "binary-format")]
-fn reload_to_mem<T: serde::de::DeserializeOwned>(filename: &str) -> Result<T, Box<dyn std::error::Error>> {
+fn deserialize_to_mem<T: serde::de::DeserializeOwned>(filename: &str) -> Result<T, Box<dyn std::error::Error>> {
     let f = File::open(filename)?;
     let reader = BufReader::new(f);
     let mut lz4_reader = lz4::Decoder::new(reader)?;
-    // Ok(serde_json::from_reader(reader)?) // json
     Ok(rmp_serde::from_read(lz4_reader)?) // messagepack
     // Ok(bincode::deserialize_from(reader)?) // bincode
 }
 
 #[cfg(not(feature = "binary-format"))]
-fn reload_to_mem<T: serde::de::DeserializeOwned>(filename: &str) -> Result<T, Box<dyn std::error::Error>> {
+fn deserialize_to_mem<T: serde::de::DeserializeOwned>(filename: &str) -> Result<T, Box<dyn std::error::Error>> {
     let f = File::open(filename)?;
     let reader = BufReader::new(f);
-    // let mut lz4_reader = lz4::Decoder::new(reader)?;
     Ok(serde_json::from_reader(reader)?) // json
-    // Ok(rmp_serde::from_read(lz4_reader)?) // messagepack
-    // Ok(bincode::deserialize_from(reader)?) // bincode
 }
+
+/// build inverted index and lexicon together
+/// need to read in the term_ID_to_term mapping, and merged_postings file
+/// maybe bottleneck: dumping cur_inverted_list should perhaps use a BufWriter to
+/// perform batched writing.
 fn build_inverted_index_and_lexicon(){
     // read in term_to_term_ID mapping
-    let term_ID_to_term: BTreeMap<u32, String> = reload_to_mem("term_ID_to_term.tmp").unwrap();
+    let term_ID_to_term: BTreeMap<u32, String> = deserialize_to_mem("term_ID_to_term.tmp").unwrap();
 
-    // let postings: Vec<Posting> = reload_to_mem("merged_postings.tmp").unwrap();
+    // let postings: Vec<Posting> = deserialize_to_mem("merged_postings.tmp").unwrap();
     let postings: Vec<Posting> = read_vector_of_postings("merged_postings.tmp");
     let mut lexicon: BTreeMap<String, LexiconValue> = BTreeMap::new(); // term to start index in inverted index
     let mut cur_inverted_list: Vec<(u32, u32)> = Vec::new();
@@ -327,7 +350,7 @@ fn build_inverted_index_and_lexicon(){
             lexicon.entry(word.clone()).and_modify(|e| { e.len += 1 });
         }
         else {
-            println!("Dumping {}: {:?}", word, cur_inverted_list);
+            // println!("Dumping {}: {:?}", word, cur_inverted_list);
             // offload_inverted_list(&cur_inverted_list);
             dumping(&cur_inverted_list, &mut f).unwrap();
             // if this a new inverted list
@@ -351,9 +374,13 @@ fn offload_dict(doc_ID: u32, dict: BTreeMap<String, u32>, vec: &mut Vec<Posting>
      }
 
 }
+/// Parse .trec file, save page_table, term_to_term_ID mapping, term_ID_to_term mapping,
+/// intermediate postings in several files(sorted before saving)
+/// maybe bottleneck: offload_dict, consumes the dict[word, count] and saves in posting_vec
+/// posting_vec are later dumped to file at an interval of processing NUM_LINES
 fn parse() {
-    // let file = File::open("msmarco-docs.trec").unwrap();
-    let file = File::open("small.trec").unwrap();
+    let file = File::open("msmarco-docs.trec").unwrap();
+    // let file = File::open("middle.trec").unwrap();
     let file = BufReader::new(file);
     // parser from scratch, because of ampersand character
     let mut next_url = false;
@@ -390,7 +417,7 @@ fn parse() {
             //assert_eq!(flow, 3);
             flow = 4;
             // 18750000
-            if cnt > 300 * num_dumped_files { // roughly 1.21GB for default json serialization
+            if cnt > 18750000 * num_dumped_files { // roughly 1.21GB for default json serialization
                 num_dumped_files += 1;
                 // dump this file
                 offload_tmp_file(&mut posting_vec);
@@ -474,8 +501,7 @@ where
     Some(buf)
 }
 fn main() {
-    // let mut f = File::open("1.tmp").unwrap();
-    // let mut r = BufReader::new(f);
+    // test forward
     // let mut posting_vec = vec![];
     // posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
     // posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
@@ -507,26 +533,21 @@ fn main() {
     // while let Some(a) = cache.forward(10) {
     //     println!("{:?}\n", a);
     // }
-    // println!("{:?}", fvec);
+    // end testing
     parse();
-    let mut fvec = Vec::new();
-    for entry in glob("./*.intermediate").expect("Failed to glob pattern") {
-        match entry {
-            Ok(path) => {
-                // println!("{:?}", path.display());
-                if let Some(filename) = path.to_str() {
-                    fvec.push(filename.to_string());
-                }
-            }
-            Err(e) => println!("{:?}", e),
-        }
-    }
-    // let f1 = "1.tmp".to_string();
-    // let f2 = "2.tmp".to_string();
-    // let f3 = "3.tmp".to_string();
-    // let f4 = "4.tmp".to_string();
-    k_way_merge(fvec);
-    // k_way_merge(vec![f1, f2]);
-    build_inverted_index_and_lexicon();
+    // let mut fvec = Vec::new();
+    // for entry in glob("./*.intermediate").expect("Failed to glob pattern") {
+    //     match entry {
+    //         Ok(path) => {
+    //             // println!("{:?}", path.display());
+    //             if let Some(filename) = path.to_str() {
+    //                 fvec.push(filename.to_string());
+    //             }
+    //         }
+    //         Err(e) => println!("{:?}", e),
+    //     }
+    // }
+    // k_way_merge(fvec);
+    // build_inverted_index_and_lexicon();
 
 }
