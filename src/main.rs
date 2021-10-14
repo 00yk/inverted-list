@@ -135,6 +135,22 @@ impl CachedFile {
         Some(res)
     }
 }
+#[cfg(feature = "binary-posting")]
+fn read_vector_of_postings(filename: &str) -> Vec<Posting>{
+    let f = File::open(filename).unwrap();
+    let mut r = BufReader::new(f);
+    let mut res: Vec<Posting> = Vec::new();
+    const num_bytes_to_read: u64 = 12;
+    while let Some(content) = read_n(&mut r, num_bytes_to_read) {
+        let mut rdr = Cursor::new(content);
+            let term_ID: u32 = rdr.read_u32::<LittleEndian>().unwrap();
+            let doc_ID: u32 = rdr.read_u32::<LittleEndian>().unwrap();
+            let freq: u32 = rdr.read_u32::<LittleEndian>().unwrap();
+            res.push(Posting { term_ID: term_ID, doc_ID: doc_ID, freq: freq });
+    }
+    res
+}
+#[cfg(not(feature = "binary-posting"))]
 fn read_vector_of_postings(filename: &str) -> Vec<Posting>{
     let f = File::open(filename).unwrap();
     let r = BufReader::new(f);
@@ -143,7 +159,7 @@ fn read_vector_of_postings(filename: &str) -> Vec<Posting>{
     for line in forwarder {
         if let Ok(content) = line {
             let v = content.split_whitespace().map(|e| e.parse::<u32>().unwrap()).collect::<Vec<u32>>();
-             res.push(Posting { term_ID: v[0], doc_ID: v[1], freq: v[2] });
+            res.push(Posting { term_ID: v[0], doc_ID: v[1], freq: v[2] });
         }
     }
     res
@@ -208,7 +224,6 @@ fn k_way_merge(files: Vec<String>) {
     let mut output_buf: Vec<Posting> = Vec::new();
     while !heap.is_empty() {
         if let Some(ele) = heap.pop() {
-            // println!("-------------Iteration-----------------------------");
             let p = ele.0.p; // unwrap Reverse struct
             let i = ele.0.index;
             output_buf.push(p);
@@ -229,22 +244,13 @@ fn k_way_merge(files: Vec<String>) {
                     else {
                         unreachable!();
                     }
-                    // println!("#### newly forwarded deque: {:?}", buf[i as usize]);
                 }
                 else {
                     // cachedfile is over, then leave empty queue where it is
                 }
             }
-            // println!("output_buf: {:?}", output_buf);
-            // println!("heap: {:?}", heap);
-            // println!("queues: {:?}", buf);
         }
     }
-    // println!("*************over");
-    // println!("length of vector of posting: {}", output_buf.len());
-    // println!("output_buf: {:?}", output_buf);
-    // println!("heap: {:?}", heap);
-    // println!("queues: {:?}", buf);
     offload_vector_of_postings(&output_buf, "merged_postings.tmp").unwrap();
 
 }
@@ -276,39 +282,39 @@ fn dumping<T: Serialize>(object: &T, f: &mut File) -> Result<(), Box<dyn std::er
 
 
 }
-// #[cfg(feature = "binary-format")]
-// fn dumping_batch<T: Serialize>(object: &T, f: &mut BufWriter) -> Result<(), Box<dyn std::error::Error>> {
-//     // let ser = bincode::serialize(object)?; // bincode
-//     let ser = rmp_serde::to_vec(object)?; // messagepack
-//     // let ser = serde_json::to_vec(object)?; // json
-//     // let mut f = File::create(filename)?;
-//     // file.write_all(&ser)?;
-//     // Ok(())
-//     let mut encoder = lz4::EncoderBuilder::new().level(1).build(f)?;
-//     encoder.write(&ser)?;
-//     let (_, result) = encoder.finish();
-//     result?;
-//     Ok(())
+#[cfg(feature = "binary-format")]
+fn dumping_batch<T: Serialize>(object: &T, wr: &mut BufWriter<File>) -> Result<(), Box<dyn std::error::Error>> {
+    // let ser = bincode::serialize(object)?; // bincode
+    let ser = rmp_serde::to_vec(object)?; // messagepack
+    // let ser = serde_json::to_vec(object)?; // json
+    // let mut f = File::create(filename)?;
+    // file.write_all(&ser)?;
+    // Ok(())
+    let mut encoder = lz4::EncoderBuilder::new().level(1).build(wr)?;
+    encoder.write(&ser)?;
+    let (_, result) = encoder.finish();
+    result?;
+    Ok(())
 
 
-// }
+}
 
-// #[cfg(not(feature = "binary-format"))]
-// fn dumping_batch<T: Serialize>(object: &T, f: &mut BufWriter<W>) -> Result<(), Box<dyn std::error::Error>> {
-//     // let ser = bincode::serialize(object)?; // bincode
-//     // let ser = rmp_serde::to_vec(object)?; // messagepack
-//     let ser = serde_json::to_vec(object)?; // json
-//     // let mut f = File::create(filename)?;
-//     f.write(&ser)?;
-//     Ok(())
-//     // let mut encoder = lz4::EncoderBuilder::new().level(1).build(f)?;
-//     // encoder.write_all(&ser)?;
-//     // let (_, result) = encoder.finish();
-//     // result?;
-//     // Ok(())
+#[cfg(not(feature = "binary-format"))]
+fn dumping_batch<T: Serialize>(object: &T, wr: &mut BufWriter<File>) -> Result<(), Box<dyn std::error::Error>> {
+    // let ser = bincode::serialize(object)?; // bincode
+    // let ser = rmp_serde::to_vec(object)?; // messagepack
+    let ser = serde_json::to_vec(object)?; // json
+    // let mut f = File::create(filename)?;
+    wr.write(&ser)?;
+    Ok(())
+    // let mut encoder = lz4::EncoderBuilder::new().level(1).build(f)?;
+    // encoder.write_all(&ser)?;
+    // let (_, result) = encoder.finish();
+    // result?;
+    // Ok(())
 
 
-// }
+}
 /// used in pair with dumping_to_file
 #[cfg(feature = "binary-format")]
 fn deserialize_to_mem<T: serde::de::DeserializeOwned>(filename: &str) -> Result<T, Box<dyn std::error::Error>> {
@@ -335,33 +341,38 @@ fn build_inverted_index_and_lexicon(){
     let term_ID_to_term: BTreeMap<u32, String> = deserialize_to_mem("term_ID_to_term.tmp").unwrap();
 
     // let postings: Vec<Posting> = deserialize_to_mem("merged_postings.tmp").unwrap();
-    let postings: Vec<Posting> = read_vector_of_postings("merged_postings.tmp");
+    let mut cachedfile = CachedFile::new("merged_postings.tmp");
+    // let postings: VecDeque<Posting> = cachedfile.forward(10).unwrap();
+    // let postings: Vec<Posting> = read_vector_of_postings("merged_postings.tmp");
     let mut lexicon: BTreeMap<String, LexiconValue> = BTreeMap::new(); // term to start index in inverted index
     let mut cur_inverted_list: Vec<(u32, u32)> = Vec::new();
     let mut num_inverted_list = 0;
-    let mut f = File::create("inverted_list.tmp").unwrap();
-    for p in postings {
-        let word = term_ID_to_term.get(&p.term_ID).unwrap();
-        if let Some(value) = lexicon.get(word) {
-            // if already in the middle of building a inverted list for p.word
-            // then keep pushing current posting doc_ID to the inverted list
-            cur_inverted_list.push((p.doc_ID, p.freq));
-            // update total inverted list len in lexicon for this term
-            lexicon.entry(word.clone()).and_modify(|e| { e.len += 1 });
-        }
-        else {
-            // println!("Dumping {}: {:?}", word, cur_inverted_list);
-            // offload_inverted_list(&cur_inverted_list);
-            dumping(&cur_inverted_list, &mut f).unwrap();
-            // if this a new inverted list
-            // insert this term into lexicon first with
-            lexicon.insert(word.clone(), LexiconValue { pos: num_inverted_list, len: 0 });
-            // update total number of inverted list
-            num_inverted_list += 1;
-            // create a inverted list
-            cur_inverted_list = Vec::new();
-            // push the first posting onto the inverted list
-            cur_inverted_list.push((p.doc_ID, p.freq));
+    let f = File::create("inverted_index.tmp").unwrap();
+    let mut wr = BufWriter::new(f);
+    while let Some(postings) = cachedfile.forward(10) {
+        for p in postings {
+            let word = term_ID_to_term.get(&p.term_ID).unwrap();
+            if let Some(_) = lexicon.get(word) {
+                // if already in the middle of building a inverted list for p.word
+                // then keep pushing current posting doc_ID to the inverted list
+                cur_inverted_list.push((p.doc_ID, p.freq));
+                // update total inverted list len in lexicon for this term
+                lexicon.entry(word.clone()).and_modify(|e| { e.len += 1 });
+            }
+            else {
+                // println!("Dumping {}: {:?}", word, cur_inverted_list);
+                // dumping(&cur_inverted_list, &mut f).unwrap();
+                dumping_batch(&cur_inverted_list, &mut wr).unwrap();
+                // if this a new inverted list
+                // insert this term into lexicon first with
+                lexicon.insert(word.clone(), LexiconValue { pos: num_inverted_list, len: 0 });
+                // update total number of inverted list
+                num_inverted_list += 1;
+                // create a inverted list
+                cur_inverted_list = Vec::new();
+                // push the first posting onto the inverted list
+                cur_inverted_list.push((p.doc_ID, p.freq));
+            }
         }
     }
     dumping_to_file(&lexicon, "lexicon.tmp").unwrap();
@@ -380,7 +391,7 @@ fn offload_dict(doc_ID: u32, dict: BTreeMap<String, u32>, vec: &mut Vec<Posting>
 /// posting_vec are later dumped to file at an interval of processing NUM_LINES
 fn parse() {
     let file = File::open("msmarco-docs.trec").unwrap();
-    // let file = File::open("middle.trec").unwrap();
+    // let file = File::open("big.trec").unwrap();
     let file = BufReader::new(file);
     // parser from scratch, because of ampersand character
     let mut next_url = false;
@@ -394,6 +405,7 @@ fn parse() {
     let mut term_ID_to_term: BTreeMap<u32, String> = BTreeMap::new();
     let mut term_to_term_ID: BTreeMap<String, u32> = BTreeMap::new();
     let mut term_count = 0;
+    const save_per_lines: u32 = 18750000;
     for line in file.lines() {
         cnt += 1;
         if cnt % 100000 == 0 {
@@ -435,7 +447,7 @@ fn parse() {
             word_count = BTreeMap::new();
 
             // 18750000
-            if cnt > 18750000 * num_dumped_files { // roughly 1.21GB for default json serialization
+            if cnt > save_per_lines * num_dumped_files { // roughly 1.21GB for default json serialization
                 num_dumped_files += 1;
                 // dump this file
                 offload_tmp_file(&mut posting_vec);
@@ -482,7 +494,7 @@ fn parse() {
         offload_tmp_file(&mut posting_vec);
     }
     // dump page table;
-    dumping_to_file(&term_ID_to_term, "page_table.tmp").unwrap();
+    dumping_to_file(&page_table, "page_table.tmp").unwrap();
 
     // dump term_ID_to_term mapping and term_to_term_ID mapping
     dumping_to_file(&term_ID_to_term, "term_ID_to_term.tmp").unwrap();
