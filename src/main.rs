@@ -407,22 +407,11 @@ fn parse() {
             //println!("url line");
             next_url = false;
 
-            // dump dict for each docID
-            offload_dict(doc_count, word_count, &mut posting_vec, &term_to_term_ID);
-            word_count = BTreeMap::new();
-
             doc_count += 1;
             page_table.insert(doc_count, s);
 
             //assert_eq!(flow, 3);
             flow = 4;
-            // 18750000
-            if cnt > 18750000 * num_dumped_files { // roughly 1.21GB for default json serialization
-                num_dumped_files += 1;
-                // dump this file
-                offload_tmp_file(&mut posting_vec);
-                posting_vec = Vec::new(); // reinit posting vec
-            }
             continue;
         }
         if s == "<DOC>" {
@@ -440,6 +429,18 @@ fn parse() {
             //println!("encounter doc end");
             //assert_eq!(flow, 5);
             flow = 0;
+
+            // dump dict for each docID
+            offload_dict(doc_count, word_count, &mut posting_vec, &term_to_term_ID);
+            word_count = BTreeMap::new();
+
+            // 18750000
+            if cnt > 18750000 * num_dumped_files { // roughly 1.21GB for default json serialization
+                num_dumped_files += 1;
+                // dump this file
+                offload_tmp_file(&mut posting_vec);
+                posting_vec = Vec::new(); // reinit posting vec
+            }
         }
         else if s == "</TEXT>" {
             //assert_eq!(flow, 4);
@@ -462,6 +463,7 @@ fn parse() {
             }
         }
         else {
+            // actual text
             // count each term for this doc
             let words = s.split_whitespace();
             for word in words {
