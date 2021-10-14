@@ -389,9 +389,8 @@ fn offload_dict(doc_ID: u32, dict: BTreeMap<String, u32>, vec: &mut Vec<Posting>
 /// intermediate postings in several files(sorted before saving)
 /// maybe bottleneck: offload_dict, consumes the dict[word, count] and saves in posting_vec
 /// posting_vec are later dumped to file at an interval of processing NUM_LINES
-fn parse() {
-    let file = File::open("msmarco-docs.trec").unwrap();
-    // let file = File::open("big.trec").unwrap();
+fn parse(filename: &str) {
+    let file = File::open(filename).unwrap();
     let file = BufReader::new(file);
     // parser from scratch, because of ampersand character
     let mut next_url = false;
@@ -479,7 +478,6 @@ fn parse() {
             // count each term for this doc
             let words = s.split_whitespace();
             for word in words {
-                // posting_vec.push(Posting {doc_ID: doc_count, word: word.to_string()});
                 word_count.entry(word.to_string()).and_modify(|freq| { *freq += 1 }).or_insert(1);
                 if let None = term_to_term_ID.get(word) {
                     term_to_term_ID.insert(word.to_string(), term_count);
@@ -515,40 +513,8 @@ where
     Some(buf)
 }
 fn main() {
-    // test forward
-    // let mut posting_vec = vec![];
-    // posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
-    // posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
-    // posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
-    // posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
-    // posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
-    // posting_vec.push(Posting{term_ID: 1, doc_ID:  2, freq:3});
-    // offload_vector_of_postings(&posting_vec, "1.tmp").unwrap();
-    // let mut cache = CachedFile::new("1.tmp");
-    // while let Some(v) = cache.forward(4) {
-    //     println!("{:?}", v);
-    // }
-    // let mut buffer = vec![0u8;10];
-    // let ret = r.read(&mut buffer);
-    // while let Some(content) = read_n(&mut r, 10) {
-    //     println!("{:?}", content);
-    // }
-    // while let Ok(n) = r.read(&mut buffer) {
-    //     if n == 0 {
-    //         println!("read 0 bytes");
-    //         break;
-    //     }
-    //     println!("{:?}", n);
-    //     println!("{:?}", buffer);
-    //     buffer.clear();
-    // }
 
-    // let mut cache = CachedFile::new("merged_postings.tmp");
-    // while let Some(a) = cache.forward(10) {
-    //     println!("{:?}\n", a);
-    // }
-    // end testing
-    parse();
+    parse("big.trec");
     // let mut fvec = Vec::new();
     // for entry in glob("./*.intermediate").expect("Failed to glob pattern") {
     //     match entry {
