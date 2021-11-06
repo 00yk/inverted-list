@@ -26,12 +26,13 @@ pub fn parse(filename: &str) {
     let mut doc_count = 0;
     let mut posting_vec: Vec<Posting> = Vec::new();
     let mut word_count: BTreeMap<String, u32> = BTreeMap::new();
-    let mut page_table: BTreeMap<u32, String> = BTreeMap::new();
+    let mut page_table: BTreeMap<u32, (String, u32)> = BTreeMap::new();
     let mut num_dumped_files = 1;
     let mut term_ID_to_term: BTreeMap<u32, String> = BTreeMap::new();
     let mut term_to_term_ID: BTreeMap<String, u32> = BTreeMap::new();
     let mut term_count = 0;
     const save_per_lines: u32 = 18750000;
+    let mut total_word_num: u64 = 0;
     for line in file.lines() {
         cnt += 1;
         if cnt % 100000 == 0 {
@@ -46,7 +47,7 @@ pub fn parse(filename: &str) {
             next_url = false;
 
             doc_count += 1;
-            page_table.insert(doc_count, s);
+            page_table.insert(doc_count, (s, 0));
 
             //assert_eq!(flow, 3);
             flow = 4;
@@ -69,6 +70,10 @@ pub fn parse(filename: &str) {
             flow = 0;
 
             // dump dict for each docID
+            let doc_length: u32 = word_count.values().sum();
+            let (s, docl) = page_table.get_mut(&doc_count).unwrap();
+            *docl = doc_length; // modify doc_length at the end of processing each doc
+            total_word_num += doc_length as u64;
             offload_dict(doc_count, word_count, &mut posting_vec, &term_to_term_ID);
             word_count = BTreeMap::new();
 
@@ -125,4 +130,12 @@ pub fn parse(filename: &str) {
     dumping_to_file(&term_ID_to_term, "term_ID_to_term.tmp").unwrap();
 
     dumping_to_file(&term_to_term_ID, "term_to_term_ID.tmp").unwrap();
+    let mut f = File::create("hyperparameter.txt").unwrap();
+    let average_doc_length: f32 = total_word_num as f32 / doc_count as f32;
+    println!("total words number: {}", total_word_num);
+
+    println!("total doc number: {}", doc_count);
+    println!("average doc length: {}", average_doc_length);
+    writeln!(f, "total doc number: {}", doc_count).unwrap();
+    writeln!(f, "average doc length: {}", average_doc_length).unwrap();
 }

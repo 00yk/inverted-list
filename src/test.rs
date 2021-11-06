@@ -48,12 +48,12 @@ fn read_specific_inverted_list() {
     use std::collections::BTreeMap;
     let mut f = File::open("inverted_index.tmp").unwrap();
     let lexicon: BTreeMap<String, LexiconValue> = deserialize_to_mem("lexicon.tmp").unwrap();
-    for (k, v) in &lexicon {
-        if v.pos == 0 {
-            println!("{:?} {:?}", k, v);
-        }
-    }
-    let v = lexicon.get("The").unwrap();
+    // for (k, v) in &lexicon {
+    //     if v.pos == 0 {
+    //         println!("{:?} {:?}", k, v);
+    //     }
+    // }
+    let v = lexicon.get("as").unwrap();
     println!("lexicon_value {:?}", v);
     let (term_ID, inverted_list) = read_inverted_list_from_offset(&mut f, v.offset);
     println!("term_ID {:?}", &term_ID);

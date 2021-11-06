@@ -114,9 +114,8 @@ pub fn convert_bytes_to_inverted_list(bytes_: Vec<u8>)
 
 pub fn read_inverted_list_from_offset(r: &mut File, offset: u64) -> (u32, Vec<(u32, u32)>) {
     r.seek(SeekFrom::Start(offset)).unwrap();
-    // let metadata = read_n(r, 12).unwrap();
     let mut metadata = vec![0u8; 12];
-    r.read_exact(&mut metadata).expect("read exact 12 bytes metadata failed!");
+    r.read_exact(&mut metadata).expect("read exact 12 bytes metadata failed! Make sure index file matches the lexicon and page_table.");
     let term_ID_bytes = (&metadata[0..4]).try_into().unwrap();
     let term_ID = u32::from_ne_bytes(term_ID_bytes);
     let length = usize::from_ne_bytes(
