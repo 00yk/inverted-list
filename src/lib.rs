@@ -18,5 +18,7 @@ mod builder;
 pub use builder::*;
 mod k_way_merge;
 pub use k_way_merge::*;
+mod vbyte;
+pub use vbyte::*;
 
 mod test;

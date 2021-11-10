@@ -19,4 +19,5 @@ glob = "0.3.0"
 # human-format = []
 binary-format = []
 binary-posting = []
+vbyte-compression = []
 default = []
