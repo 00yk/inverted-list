@@ -88,32 +88,32 @@ pub fn convert_inverted_list_to_bytes(term_ID: u32, inverted_list: Vec<(u32, u32
 
     bytes_representation
 }
-#[cfg(not(feature = "vbyte-compression"))]
-pub fn convert_bytes_to_inverted_list(bytes_: Vec<u8>)
-                                      -> (u32, Vec<(u32, u32)>) {
-    let term_ID_bytes: [u8; 4] = (&bytes_[0..4]).try_into().unwrap();
-    let term_ID = u32::from_ne_bytes(term_ID_bytes);
+// #[cfg(not(feature = "vbyte-compression"))]
+// pub fn convert_bytes_to_inverted_list(bytes_: Vec<u8>)
+//                                       -> (u32, Vec<(u32, u32)>) {
+//     let term_ID_bytes: [u8; 4] = (&bytes_[0..4]).try_into().unwrap();
+//     let term_ID = u32::from_ne_bytes(term_ID_bytes);
 
-    let length = usize::from_ne_bytes(
-        (&bytes_[4..12]).try_into().unwrap()
-    );
-    let mut inverted_list = vec![];
-    for i in 0..length {
-        let start_pos = 12 + 8 * i;
-        let doc_ID = u32::from_ne_bytes(
-            (&bytes_[start_pos..start_pos + 4]).try_into().unwrap()
-        );
-        let frequency = u32::from_ne_bytes(
-            (&bytes_[start_pos + 4..start_pos + 8]).try_into().unwrap()
-        );
-        inverted_list.push(
-            (doc_ID, frequency)
-        );
-    }
+//     let length = usize::from_ne_bytes(
+//         (&bytes_[4..12]).try_into().unwrap()
+//     );
+//     let mut inverted_list = vec![];
+//     for i in 0..length {
+//         let start_pos = 12 + 8 * i;
+//         let doc_ID = u32::from_ne_bytes(
+//             (&bytes_[start_pos..start_pos + 4]).try_into().unwrap()
+//         );
+//         let frequency = u32::from_ne_bytes(
+//             (&bytes_[start_pos + 4..start_pos + 8]).try_into().unwrap()
+//         );
+//         inverted_list.push(
+//             (doc_ID, frequency)
+//         );
+//     }
 
 
-    (term_ID, inverted_list)
-}
+//     (term_ID, inverted_list)
+// }
 
 #[cfg(not(feature = "vbyte-compression"))]
 pub fn read_inverted_list_from_offset(r: &mut File, offset: u64) -> (u32, Vec<(u32, u32)>) {
@@ -174,32 +174,6 @@ pub fn convert_inverted_list_to_bytes(term_ID: u32, mut inverted_list: Vec<(u32,
     // end
 
     bytes_representation
-}
-#[cfg(feature = "vbyte-compression")]
-pub fn convert_bytes_to_inverted_list(bytes_: Vec<u8>)
-                                      -> (u32, Vec<(u32, u32)>) {
-    let term_ID_bytes: [u8; 4] = (&bytes_[0..4]).try_into().unwrap();
-    let term_ID = u32::from_ne_bytes(term_ID_bytes);
-
-    let length = usize::from_ne_bytes(
-        (&bytes_[4..12]).try_into().unwrap()
-    );
-    let mut inverted_list = vec![];
-    for i in 0..length {
-        let start_pos = 12 + 8 * i;
-        let doc_ID = u32::from_ne_bytes(
-            (&bytes_[start_pos..start_pos + 4]).try_into().unwrap()
-        );
-        let frequency = u32::from_ne_bytes(
-            (&bytes_[start_pos + 4..start_pos + 8]).try_into().unwrap()
-        );
-        inverted_list.push(
-            (doc_ID, frequency)
-        );
-    }
-
-
-    (term_ID, inverted_list)
 }
 
 #[cfg(feature = "vbyte-compression")]
