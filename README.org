@@ -89,5 +89,5 @@ I enabled both binary-posting and binary-format features to achievement proper e
 |------+------------+-----------------+-----------------+---------+----------------|
 | size | 152MB      | 972MB           | 904MB           | 953MB   | 8.3G           |
 
-** Reason why not strictly linear scale up compare to results in ablation test seciotn
+** Reason why not strictly linear scale up compare to results in ablation test section
 Use different hyperparameter, thus size of each intermediate posting files vary.

@@ -150,19 +150,16 @@ pub fn convert_inverted_list_to_bytes(term_ID: u32, mut inverted_list: Vec<(u32,
     let mut metadata: Vec<u8> = vec![];
 
     let term_ID_bytes = term_ID.to_ne_bytes();
-    let length_bytes = inverted_list.len().to_ne_bytes();
     metadata.extend(term_ID_bytes);
-    metadata.extend(length_bytes);
-    bytes_representation.extend(metadata);
-    // encode all inverted_list (doc_ID, freq) in normal 4 bytes for u32 scheme
-    // for ele in inverted_list {
-    //     let e1 = ele.0.to_ne_bytes();
-    //     let e2 = ele.1.to_ne_bytes();
-    //     bytes_representation.extend(e1);
-    //     bytes_representation.extend(e2);
+                        // encode all inverted_list (doc_ID, freq) in normal 4 bytes for u32 scheme
+                        // for ele in inverted_list {
+                        //     let e1 = ele.0.to_ne_bytes();
+                        //     let e2 = ele.1.to_ne_bytes();
+                        //     bytes_representation.extend(e1);
+                        //     bytes_representation.extend(e2);
 
-    // }
-    // end
+                        // }
+                        // end
     // use vbyte compression
     // unsafe transmute Vec<(u32, u32)> to Vec<u32>
     let input: Vec<u32> = unsafe {
@@ -170,6 +167,10 @@ pub fn convert_inverted_list_to_bytes(term_ID: u32, mut inverted_list: Vec<(u32,
         std::mem::transmute(inverted_list)
     };
     let bytes = vbyteEncode(input);
+    // length can only be known after vbyteEncode
+    let vbyte_content_length_bytes = bytes.len().to_ne_bytes();
+    metadata.extend(vbyte_content_length_bytes);
+    bytes_representation.extend(metadata);
     bytes_representation.extend(bytes);
     // end
 
@@ -183,12 +184,12 @@ pub fn read_inverted_list_from_offset(r: &mut File, offset: u64) -> (u32, Vec<(u
     r.read_exact(&mut metadata).expect("read exact 12 bytes metadata failed! Make sure index file matches the lexicon and page_table.");
     let term_ID_bytes = (&metadata[0..4]).try_into().unwrap();
     let term_ID = u32::from_ne_bytes(term_ID_bytes);
-    let length = usize::from_ne_bytes(
+    let vbyte_content_length = usize::from_ne_bytes(
         (&metadata[4..12]).try_into().unwrap()
     );
     // let mut inverted_list = vec![];
     // let li = read_n(r, length as u64 * 8).unwrap();
-    let mut li = vec![0u8; length * 8];
+    let mut li = vec![0u8; vbyte_content_length]; // FIXME: cannot be calculated through length * 8, because we use vbyte compression now!
     r.read_exact(&mut li).expect("read exact length as u64 * 8 bytes li failed!");
 
     // encode all inverted_list (doc_ID, freq) in normal 4 bytes for u32 scheme
