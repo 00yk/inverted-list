@@ -3,7 +3,7 @@ use inverted_list::{parse, k_way_merge, build_inverted_index_and_lexicon};
 
 fn main() {
 
-    parse("small.trec");
+    parse("msmarco-docs.trec");
     let mut fvec = Vec::new();
     for entry in glob("./*.intermediate").expect("Failed to glob pattern") {
         match entry {

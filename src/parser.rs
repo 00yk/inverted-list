@@ -3,6 +3,21 @@ use std::io::{BufReader, Read, Write, BufWriter};
 use std::collections::BTreeMap;
 use crate::serde_utils::*;
 use crate::posting::*;
+use mongodb::IndexModel;
+use mongodb::options::IndexOptions;
+use mongodb::{
+    bson::doc,
+    sync::Client,
+};
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Page {
+    // #[serde(rename = "_id")]
+    pub docID: u32,
+    pub URL: String,
+    pub content: Vec<String>
+}
 
 pub fn offload_dict(doc_ID: u32, dict: BTreeMap<String, u32>, vec: &mut Vec<Posting>, term_to_term_ID: &BTreeMap<String, u32>) {
      // dumping [word]freq to Vec<Posting>
@@ -33,6 +48,18 @@ pub fn parse(filename: &str) {
     let mut term_count = 0;
     const save_per_lines: u32 = 18750000;
     let mut total_word_num: u64 = 0;
+    let mut content = vec![];
+
+    // mongodb connection
+    let client = Client::with_uri_str("mongodb://localhost:27017").expect("MongoDB connection failed");
+    let database = client.database("wse");
+    let collection = database.collection::<Page>("pages");
+    let new_index = IndexModel::builder()
+        .keys(doc! { "docID": 1 })
+        .options(IndexOptions::builder().unique(true).build())
+        .build();
+    collection.create_index(new_index, None).expect("create MongoDB index failed");
+
     for line in file.lines() {
         cnt += 1;
         if cnt % 100000 == 0 {
@@ -73,9 +100,21 @@ pub fn parse(filename: &str) {
             let doc_length: u32 = word_count.values().sum();
             let (s, docl) = page_table.get_mut(&doc_count).unwrap();
             *docl = doc_length; // modify doc_length at the end of processing each doc
+
             total_word_num += doc_length as u64;
+
+            // println!("doc_count: {:?}", doc_count);
             offload_dict(doc_count, word_count, &mut posting_vec, &term_to_term_ID);
+
             word_count = BTreeMap::new();
+
+            let page = Page {
+                docID: doc_count,
+                URL: page_table.get(&doc_count).unwrap().0.clone(),
+                content: content
+            };
+            collection.insert_one(page, None).expect("MongoDB insertion failed");
+            content = vec![];
 
             // 18750000
             if cnt > save_per_lines * num_dumped_files { // roughly 1.21GB for default json serialization
@@ -108,6 +147,8 @@ pub fn parse(filename: &str) {
         else {
             // actual text
             // count each term for this doc
+            // track all document content in a Vec<String>
+            content.push(s.clone());
             let words = s.split_whitespace();
             for word in words {
                 word_count.entry(word.to_string()).and_modify(|freq| { *freq += 1 }).or_insert(1);
